@@ -1,5 +1,5 @@
 ### A Pluto.jl notebook ###
-# v0.19.10
+# v0.19.11
 
 using Markdown
 using InteractiveUtils
@@ -40,6 +40,8 @@ begin
 	using NeutrinoTelescopes.LightYield
 	using NeutrinoTelescopes.Modelling
 	using NeutrinoTelescopes.Spectral
+	using NeutrinoTelescopes.Emission
+	using NeutrinoTelescopes
 	
 	using Flux
 	using BSON: @save, @load
@@ -68,7 +70,7 @@ Distance: $(@bind distance Slider(5f0:0.1f0:200f0, default=25, show_value=true))
 begin
 	n_photons = 100000
 	medium = Medium.make_cascadia_medium_properties(Float32)
-	prop_result = PhotonPropagationCuda.propagate_distance(distance, medium, n_photons)
+	prop_result, nph_sim = PhotonPropagationCuda.propagate_distance(distance, medium, n_photons)
 	nothing
 end
 
@@ -119,10 +121,10 @@ Runs the photon propagation for multiple distances and reweights those simulatio
 
 # ╔═╡ 74b11928-fe9c-11ec-1d37-01f9b1e48fbe
 begin	
-	#results_df = Modelling.make_photon_fits(Int64(1E8), 250, 250, 300f0)
-	#write_parquet("photon_fits.parquet", results_df)
+	#results_df = make_photon_fits(Int64(1E8), Int64(1E5), 250, 250, 300f0)
+	#write_parquet("../assets/photon_fits.parquet", results_df)
 	results_df = read_parquet("../assets/photon_fits.parquet")
-end#
+end
 
 
 # ╔═╡ 26c7461c-5475-4aa9-b87e-7a55b82cea1f
@@ -142,13 +144,14 @@ begin
 
 	#=
 	params = Dict(
-		:width=>1024,
-		:learning_rate=>0.001,
-		:batch_size=>4096,
+		:width=>960,
+		:learning_rate=>0.000357,
+		:batch_size=>2048,
 		:data_file=>"../assets/photon_fits.parquet",
-		:dropout_rate=>0.1,
+		:dropout_rate=>0.18,
 		:seed=>31138,
-		:epochs=>250
+		:epochs=>500,
+		:tblogger=>false
 		)
 	
 	
@@ -159,11 +162,12 @@ begin
 	@show Modelling.loss_all(test_data, model)
 
 	model = cpu(model)
-	@save "photon_model.bson" model params
+	@save "../assets/photon_model.bson" model params
 
 	=#
 	model = BSON.load("../assets/photon_model.bson", @__MODULE__)[:model]
 	params = BSON.load("../assets/photon_model.bson", @__MODULE__)[:params]
+	
 	#@load "photon_model.bson" model
 
 	
@@ -172,11 +176,11 @@ begin
 
 	train_data = gpu.(train_data)
 	test_data = gpu.(test_data)
-		
+
 	output_trafos = [
 		trafos[(:fit_alpha, :log_fit_alpha)],
 		trafos[(:fit_theta, :log_fit_theta)],
-		trafos[(:det_fraction, :log_det_fraction_scaled)]
+		trafos[(:det_fraction, :neg_log_det_fraction_scaled)]
 	]
 	
 
@@ -198,12 +202,12 @@ begin
 	l = @layout [a b c; d e f]
 	plots = []
 	feature_names = [:log_distance, :cos_obs_angle]
-	target_names = [:log_fit_alpha, :log_fit_theta, :log_det_fraction]
+	target_names = [:log_fit_alpha, :log_fit_theta, :neg_log_det_fraction_scaled]
 	
 	for (i, j) in Base.product(1:3, 1:2)
 	    p = scatter(feat_test[j, :], targ_test[i, :], alpha=0.7, label="Truth",
-	        xlabel=feature_names[j], ylabel=target_names[i], ylim=(-1, 2), legend=:topleft)
-	    scatter!(p, feat_test[j, :], target_pred_test[i, :], alpha=0.7, label="Prediction")
+	        xlabel=feature_names[j], ylabel=target_names[i], legend=:topleft)
+	    scatter!(p, feat_test[j, :], target_pred_test[i, :], alpha=0.1, label="Prediction")
 	    push!(plots, p)
 	end
 
@@ -226,47 +230,55 @@ md"""
 
 # ╔═╡ be1a6f87-65e3-4741-8b98-bb4d305bd8c3
 begin
+	test_ix = 2
+	
     position = @SVector[0.0, 0.0, 0.0]
-    direction = @SVector[0.0, 0.0, 1.0]
-    energy = 1E5
+    direction = @SVector[0.0, sin(acos(feat_test[2, test_ix])), feat_test[2, test_ix]]
+    energy = 1E6
     time = 0.0
-	photons = 1000000
-	medium64 = Medium.make_cascadia_medium_properties(Float64)
-	spectrum = Spectral.CherenkovSpectrum((300.0, 800.0), 20, medium64)
-	em_profile = Emission.AngularEmissionProfile{:IsotropicEmission, Float64}()
-	
-	source = LightYield.CherenkovSegment(position, direction, time, Float64(photons))
-	
+	photons = Int64(1E8)
+	medium64 = make_cascadia_medium_properties(Float64)
+	spectrum = CherenkovSpectrum((300.0, 800.0), 20, medium64)
+	em_profile = AngularEmissionProfile{:IsotropicEmission, Float64}()
 
-	target_pos = @SVector[-10., 0.0, 10.0]
-	target = Detection.DetectionSphere(target_pos, 0.21)
+	source = CherenkovSegment(position, direction, time, Float64(photons))
+
+	target_pos = @SVector[0., 0., exp10(feat_test[1, test_ix])]
+	target = DetectionSphere(target_pos, 0.21)
 	
 	model_input = Matrix{Float32}(undef, (2, 1))
-	model_input[:, 1] .= Modelling.source_to_input(source, target)
+	model_input[:, 1] .= source_to_input(source, target)
 	model_pred = cpu(model(gpu(model_input)))
 
+	@show model_pred
+	
 	Modelling.transform_model_output!(model_pred, output_trafos)
 	
 	n_photons_pred = photons * model_pred[3, 1]
 
+	#= geo_acc = (
+        pmts_per_module * (pmt_cath_area_r) ** 2 * np.pi / (4 * np.pi * 		module_radius**2)
+    )
+	=#
+
 	
-	this_prop_result = PhotonPropagation.propagate_distance(Float32(exp10(model_input[1, 1])), medium, photons)
+	this_prop_result, nph_gen = propagate_distance(Float32(exp10(model_input[1, 1])), medium, photons)
 
 	this_total_weight = (
-		Modelling.get_dir_reweight(this_prop_result[:, :initial_theta],
+		get_dir_reweight(this_prop_result[:, :initial_theta],
 			acos(model_input[2, 1]), this_prop_result[:, :ref_ix])
 		.* this_prop_result[:, :abs_weight]
-		.* Detection.p_one_pmt_acc.(this_prop_result[:, :wavelength])
-	)
+		.* p_one_pmt_acc.(this_prop_result[:, :wavelength])
+	) * photons / nph_gen
+
+	tbins=0:0.1:15
 	
 	histogram(this_prop_result[:, :tres], weights=this_total_weight, normalize=false,
-	xlabel="Time (ns)", ylabel="# Photons", label="MC")
+	xlabel="Time (ns)", ylabel="# Photons", label="MC", bins=tbins)
 
-	xs_plot = 0:0.1:15
-	
 	gamma_pdf = Gamma(model_pred[1], model_pred[2])
 	
-	plot!(xs_plot, n_photons_pred .* pdf.(gamma_pdf, xs_plot), label="Model")
+	plot!(tbins[1:end-1], n_photons_pred .* (cdf(gamma_pdf, tbins[2:end]) - cdf(gamma_pdf, tbins[1:end-1])), label="Model", linetype=:steppre)
 	#n_photons_pred, sum(this_total_weight)
 end
 
@@ -274,7 +286,7 @@ end
 
 
 
-# ╔═╡ 57450082-04dc-4d1a-8ef4-e321c3971c84
+# ╔═╡ 1b807e1b-e5b4-4522-8a28-318ca965132a
 n_photons_pred, sum(this_total_weight)
 
 # ╔═╡ 31ab7848-b1d8-4380-872e-8a12c3331051
@@ -528,7 +540,7 @@ end
 # ╠═984b11c9-2cd5-4dd6-9f36-26eec69eb17d
 # ╠═0a37ce94-a949-4c3d-9cd7-1a64b1a3ce47
 # ╠═be1a6f87-65e3-4741-8b98-bb4d305bd8c3
-# ╠═57450082-04dc-4d1a-8ef4-e321c3971c84
+# ╠═1b807e1b-e5b4-4522-8a28-318ca965132a
 # ╠═31ab7848-b1d8-4380-872e-8a12c3331051
 # ╠═22e419a4-a4f9-48d5-950b-8420854c475a
 # ╠═4f7a9060-33dc-4bb8-9e41-eae5b9a30aa6

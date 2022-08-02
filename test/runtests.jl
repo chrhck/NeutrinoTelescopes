@@ -11,6 +11,17 @@ using DataStructures
     @testset "Utils" begin
         using NeutrinoTelescopes.Utils
 
+        @testset "integrate_gauss_quad" begin
+            let f = x->x^3
+                @test integrate_gauss_quad(f, 0., 1.) ≈ 1/4
+            end
+
+            let f = cos, a=0., b=0.5
+                @test integrate_gauss_quad(f, a, b) ≈ sin(b) - sin(a)
+            end
+
+        end
+
         @testset "sph_to_cart" begin
             let theta = 0.0, phi = 0.0
                 @test sph_to_cart(theta, phi) ≈ SA[0.0, 0.0, 1.0]

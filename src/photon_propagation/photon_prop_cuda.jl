@@ -9,6 +9,7 @@ using DataFrames
 using Unitful
 using PhysicalConstants.CODATA2018
 using StatsBase
+using Logging
 
 
 export cuda_propagate_photons!, initialize_photon_arrays, process_output
@@ -86,9 +87,9 @@ function initialize_photons!(source::PhotonSource{T,U,V}, photon_container::Abst
     return nothing
 end
 
+"""
+function update_direction!(this_dir::AbstractArray{T}) where {T}
 
-@inline function update_direction!(this_dir::AbstractArray{T}) where {T}
-    #=
     Update the photon direction using scattering function.
 
     New direction is relative to e_z. Axis of rotation defined by rotating e_z to old dir and applying
@@ -102,12 +103,12 @@ end
         axop = axis x new_dir
         rotated = new_dir * cos(theta) + sin(theta) * (axis x new_dir) + (1-cos(theta)) * (axis * new_dir) * axis
 
-    =#
-
-
+"""
+@inline function update_direction!(this_dir::AbstractArray{T}) where {T}
+    
     # Calculate new direction (relative to e_z)
     cos_sca_theta = cuda_hg_scattering_func(T(0.99))
-    sin_sca_theta = CUDA.sqrt(CUDA.fma(-cos_theta, cos_theta, 1))
+    sin_sca_theta = sqrt(CUDA.fma(-cos_theta, cos_theta, 1))
     sca_phi = uniform(T(0), T(2 * pi))
 
     new_dir_1 = cos(sca_phi) * sin_sca_theta
@@ -149,7 +150,7 @@ end
     new_y = new_dir_2 * costheta + axop2 * sintheta + ax2 * axopdot * (1 - costheta)
     new_z = new_dir_3 * costheta + axop3 * sintheta
 
-    norm = CUDA.sqrt(new_x^2 + new_y^2 + new_z^2)
+    norm = sqrt(new_x^2 + new_y^2 + new_z^2)
 
     this_dir[1] = new_x / norm
     this_dir[2] = new_y / norm
@@ -264,8 +265,9 @@ function cuda_propagate_photons!(
     out_directions::CuDeviceVector{SVector{3,T}},
     out_wavelengths::CuDeviceVector{T},
     out_dist_travelled::CuDeviceVector{T},
-    out_stack_pointers::CuDeviceVector{Int32},
+    out_stack_pointers::CuDeviceVector{Int64},
     out_n_ph_simulated::CuDeviceVector{Int64},
+    out_err_code::CuDeviceVector{Int32},
     stack_len::Int32,
     seed::Int64,
     ::Val{source},
@@ -281,18 +283,18 @@ function cuda_propagate_photons!(
     # warp_ix = thread % warp
     global_thread_index::Int32 = (block - Int32(1)) * blockdim + thread
 
-    cache = @cuDynamicSharedMem(Int32, 1)
+    cache = @cuDynamicSharedMem(Int64, 1)
     Random.seed!(seed + global_thread_index)
 
 
-    this_n_photons::Int32 = cld(source.photons, (griddim * blockdim))
+    this_n_photons::Int64 = cld(source.photons, (griddim * blockdim))
 
     medium::MediumProperties{T} = MediumProp
 
     target_rsq = target_r^2
     # stack_len is stack_len per block
 
-    ix_offset::Int32 = (block - 1) * (stack_len) + 1
+    ix_offset::Int64 = (block - 1) * (stack_len) + 1
     @inbounds cache[1] = ix_offset
 
     safe_margin = max(0, (blockdim - warpsize))
@@ -302,6 +304,7 @@ function cuda_propagate_photons!(
 
         if cache[1] > (ix_offset + stack_len - safe_margin)
             CUDA.sync_threads()
+            out_err_code[1] = -1
             break
         end
 
@@ -362,7 +365,7 @@ function cuda_propagate_photons!(
 
             #@cuprintln("Thread: $thread, Block $block, photon: $i, isec: $isec")
             if isec
-                stack_idx::Int32 = CUDA.atomic_add!(pointer(cache, 1), Int32(1))
+                stack_idx::Int64 = CUDA.atomic_add!(pointer(cache, 1), Int64(1))
                 # @cuprintln("Thread: $thread, Block $block writing to $stack_idx")                
                 CUDA.@cuassert stack_idx <= ix_offset + stack_len "Stack overflow"
 
@@ -380,6 +383,7 @@ function cuda_propagate_photons!(
     end
 
     CUDA.atomic_add!(pointer(out_n_ph_simulated, 1), n_photons_simulated)
+    out_err_code[1] = 0
 
     return nothing
 
@@ -396,7 +400,7 @@ function process_output(output::AbstractVector{T}, stack_pointers::AbstractVecto
 
     coalesced = Vector{T}(undef, out_sum)
     ix = 1
-    for i in 1:size(stack_pointers, 1)
+    for i in eachindex(stack_pointers)
         sp = stack_pointers[i]
         if sp == 0
             continue
@@ -416,7 +420,7 @@ function initialize_photon_arrays(stack_length::Int32, blocks, type::Type)
         CuVector(zeros(SVector{3,type}, stack_length * blocks)),
         CuVector(zeros(type, stack_length * blocks)),
         CuVector(zeros(type, stack_length * blocks)),
-        CuVector(zeros(Int32, blocks)),
+        CuVector(zeros(Int64, blocks)),
         CuVector(zeros(Int64, 1))
     )
 end
@@ -531,8 +535,6 @@ function propagate_sources(sources::AbstractVector{PhotonSource{T,U,V}}) where {
 end
 
 
-
-
 function propagate(photons, intersected, photon_target, steps, seed)
     kernel = @cuda launch = false cuda_step_photons!(photons, intersected, Val(photon_target), Val(steps), seed)
     config = launch_configuration(kernel.fun, shmem=calc_shmem)
@@ -585,6 +587,20 @@ function make_bench_cuda_step_photons!(N)
     bench
 end
 
+
+
+function calculate_gpu_memory_usage(stack_length, blocks)
+    return sizeof(SVector{3, Float32}) * 2 * stack_length * blocks +
+           sizeof(Float32) * 2 * stack_length * blocks +
+           sizeof(Int32) * blocks +
+           sizeof(Int64)
+end
+
+function calculate_max_stack_size(total_mem, blocks)
+    return convert(Int32, floor((total_mem - sizeof(Int64) -  sizeof(Int32) * blocks) / (sizeof(SVector{3, Float32}) * 2 * blocks +  sizeof(Float32) * 2 * blocks)))
+end
+
+
 function propagate_distance(distance::Float32, medium::MediumProperties, n_ph_gen::Int64)
 
     target_radius = 0.21f0
@@ -597,22 +613,64 @@ function propagate_distance(distance::Float32, medium::MediumProperties, n_ph_ge
         AngularEmissionProfile{:IsotropicEmission,Float32}(),)
     target = DetectionSphere(@SVector[0.0f0, 0.0f0, distance], target_radius)
 
-    threads = 1024
-    blocks = 16
+    threads = 512
+    blocks = 64
 
-    stack_len = Int32(cld(1E5, blocks))
+    avail_mem = CUDA.totalmem(collect(CUDA.devices())[1])
+    max_total_stack_len = calculate_max_stack_size(0.5*avail_mem, blocks)
+
+    @debug "Max stack size (90%): $max_total_stack_len"
+
+    if n_ph_gen > max_total_stack_len
+        @debug "Estimating acceptance fraction"
+        test_nph = 1E5
+        # Estimate required_stack_length
+        stack_len = Int32(cld(1E5, blocks))
+        positions, directions, wavelengths, dist_travelled, stack_idx, n_ph_sim = initialize_photon_arrays(stack_len, blocks, Float32)
+        err_code = CuVector(zeros(Int32, 1))
+
+        test_source = PhotonSource(
+            @SVector[0.0f0, 0.0f0, 0.0f0],
+            @SVector[0.0f0, 0.0f0, 1.0f0],
+            0.0f0,
+            Int64(test_nph),
+            CherenkovSpectrum((300.0f0, 800.0f0), 20, medium),
+            AngularEmissionProfile{:IsotropicEmission,Float32}(),)
+
+        @cuda threads = threads blocks = blocks shmem = sizeof(Int64) cuda_propagate_photons!(
+            positions, directions, wavelengths, dist_travelled, stack_idx, n_ph_sim, err_code, stack_len, Int64(0),
+            Val(test_source), target.position, target.radius, Val(medium))
+        
+        n_ph_sim = Vector(n_ph_sim)[1]
+        n_ph_det = sum(stack_idx .% stack_len)
+        acc_frac = n_ph_det / n_ph_sim
+
+        @debug "Acceptance fraction: $acc_frac"
+
+        est_surv = acc_frac * n_ph_gen
+        
+        if est_surv > max_total_stack_len
+            @warn "WARNING: Estimating more than $(max_total_stack_len) surviving photons, number of generated photons might be truncated"
+            est_surv = max_total_stack_len
+        end
+
+        stack_len = max(Int32(cld(est_surv, blocks)), Int32(1E6))
+    else
+        stack_len = Int32(1E6)
+    end
 
     positions, directions, wavelengths, dist_travelled, stack_idx, n_ph_sim = initialize_photon_arrays(stack_len, blocks, Float32)
-
-    @cuda threads = threads blocks = blocks shmem = sizeof(Int32) cuda_propagate_photons!(
-        positions, directions, wavelengths, dist_travelled, stack_idx, n_ph_sim, stack_len, Int64(0),
+    err_code = CuVector(zeros(Int32, 1))
+    @cuda threads = threads blocks = blocks shmem = sizeof(Int64) cuda_propagate_photons!(
+        positions, directions, wavelengths, dist_travelled, stack_idx, n_ph_sim, err_code, stack_len, Int64(0),
         Val(source), target.position, target.radius, Val(medium))
 
     if all(stack_idx .== 0)
-        println("No photons survived (distance=$distance)")
+        @warn "No photons survived (distance=$distance, n_ph_gen: $n_ph_gen)"
         return DataFrame()
     end
 
+    
     n_ph_sim = Vector(n_ph_sim)[1]
 
     distt = process_output(Vector(dist_travelled), Vector(stack_idx))
@@ -620,16 +678,6 @@ function propagate_distance(distance::Float32, medium::MediumProperties, n_ph_ge
     directions = process_output(Vector(directions), Vector(stack_idx))
 
     abs_weight = convert(Vector{Float64}, exp.(-distt ./ get_absorption_length.(wls, Ref(medium))))
-
-    if n_ph_sim > n_ph_gen
-        n_ph_det = size(abs_weight, 1)
-        n_downsample = Int64(ceil(n_ph_det * n_ph_gen / n_ph_sim))
-        distt = distt[1:n_downsample]
-        wls = wls[1:n_downsample]
-        directions = directions[1:n_downsample]
-        abs_weight = abs_weight[1:n_downsample]
-    end
-
 
     ref_ix = get_refractive_index.(wls, Ref(medium))
     c_vac = ustrip(u"m/ns", SpeedOfLightInVacuum)
@@ -640,9 +688,10 @@ function propagate_distance(distance::Float32, medium::MediumProperties, n_ph_ge
     tres = (photon_times .- tgeo)
     thetas = map(dir -> acos(dir[3]), directions)
 
-    DataFrame(tres=tres, initial_theta=thetas, ref_ix=ref_ix, abs_weight=abs_weight, dist_travelled=distt, wavelength=wls)
+    DataFrame(tres=tres, initial_theta=thetas, ref_ix=ref_ix, abs_weight=abs_weight, dist_travelled=distt, wavelength=wls), n_ph_sim
 end
 
+#=
 # Workaround for Flux breaking the RNG
 function __init__()
     println("Doing initial prop")
@@ -650,6 +699,6 @@ function __init__()
     propagate_distance(10.0f0, medium, 100)
     nothing
 end
-
+=#
 
 end # module

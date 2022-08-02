@@ -1,5 +1,5 @@
 ### A Pluto.jl notebook ###
-# v0.19.10
+# v0.19.11
 
 using Markdown
 using InteractiveUtils
@@ -38,14 +38,18 @@ begin
    	using Printf
 	using StatsPlots
 	using StatsBase
+	using Enzyme
 end
+
+# ╔═╡ 4b33aa8c-9644-4938-a3e4-ce1c857bebb3
+
 
 # ╔═╡ f3f610e5-5345-4ddc-b5ac-caa4807c744f
 begin
 	data = BSON.load(joinpath(@__DIR__, "../assets/photon_model.bson"), @__MODULE__)
 	model = data[:model] |> gpu
 	
-	output_trafos = [:log, :log, :neg_log_scale]
+	output_trafos = [:log, :log, :neg_log]
 	
 	positions = make_detector_cube(5, 5, 10, 50.0, 100.0)
 	targets = make_targets(positions)
@@ -203,6 +207,7 @@ plot(timestamps_hires, reco_wf_uf_values- reco_wf_uf_values_filtered)
 
 # ╔═╡ Cell order:
 # ╠═882822ac-0d8e-11ed-3403-cfcd68ec92fc
+# ╠═4b33aa8c-9644-4938-a3e4-ce1c857bebb3
 # ╠═f3f610e5-5345-4ddc-b5ac-caa4807c744f
 # ╠═1b6f5040-f704-4156-a659-fb718002f896
 # ╠═f0f4c1aa-e4c9-41c3-bda9-02c98954a1c5

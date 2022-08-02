@@ -45,9 +45,9 @@ struct Cuboid{T} <: VolumeType
     l_z::T
 end
 
-struct FixedPosition <: VolumeType
+struct FixedPosition{T} <: VolumeType
     position::SVector{3,T}
-
+end
 """
     rand(::VolumeType)
 

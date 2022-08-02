@@ -16,6 +16,8 @@ using Random
 using LinearAlgebra
 using Base.Iterators
 using Zygote
+using ParameterSchedulers
+using ParameterSchedulers: AbstractSchedule
 
 using Logging: with_logger
 using TensorBoardLogger: TBLogger, tb_increment, set_step!, set_step_increment!
@@ -32,8 +34,9 @@ export Hyperparams, get_data
 export splitdf, read_from_parquet
 export loss_all, train_mlp
 export source_to_input
-export apply_transformation, reverse_transformation
+export apply_transformation, reverse_transformation, transform_model_output!
 export poisson_dist_per_module, shape_mixture_per_module, evaluate_model, sample_event
+export NoSchedulePars, SinDecaySchedulePars, LRScheduleParams
 
 """
     get_dir_reweight(thetas::AbstractVector{T}, obs_angle::T, ref_ixs::AbstractVector{T})
@@ -86,7 +89,7 @@ end
 
 Convenience function for propagating photons and fitting the arrival time distributions.
 """
-function make_photon_fits(n_photons_per_dist::Int64, n_distances::Integer, n_angles::Integer, max_dist::Float32=300.0f0)
+function make_photon_fits(n_photons_per_dist::Int64, max_nph_det::Int64, n_distances::Integer, n_angles::Integer, max_dist::Float32=300.0f0)
 
     s = SobolSeq([0.0], [pi])
     medium = make_cascadia_medium_properties(Float32)
@@ -94,10 +97,20 @@ function make_photon_fits(n_photons_per_dist::Int64, n_distances::Integer, n_ang
     s2 = SobolSeq([0.0f0], [Float32(log10(max_dist))])
     distances = 10 .^ reduce(hcat, next!(s2) for i in 1:n_distances)
 
-    results = Vector{DataFrame}(undef, n_distances)
+    results = Vector{Tuple{DataFrame, Int64}}(undef, n_distances)
 
     @progress name = "Propagating photons" for (i, dist) in enumerate(distances)
-        results[i] = propagate_distance(dist, medium, n_photons_per_dist)
+        
+        prop_res, nph_sim = propagate_distance(dist, medium, n_photons_per_dist)
+
+        # if we have more detected photons than we want, discard und upweight the rest
+        if nrow(prop_res) > max_nph_det
+            upweight = nrow(prop_res) / max_nph_det
+            prop_res = prop_res[1:max_nph_det, :]
+            prop_res[:, :abs_weight] .*= upweight
+        end
+
+        results[i] = prop_res, nph_sim
 
     end
 
@@ -106,17 +119,41 @@ function make_photon_fits(n_photons_per_dist::Int64, n_distances::Integer, n_ang
     results_fit = Vector{DataFrame}(undef, n_distances)
 
     @progress name = "Propagating photons" for (i, dist) in enumerate(distances)
-        results_fit[i] = fit_photon_dist(obs_angles, results[i], n_photons_per_dist)
+        results_fit[i] = fit_photon_dist(obs_angles, results[i][1], results[i][2])
     end
 
     vcat(results_fit..., source=:distance => vec(distances))
 
 end
 
+
+abstract type LRScheduleParams end
+
+Base.@kwdef mutable struct NoSchedulePars <: LRScheduleParams
+    learning_rate::Float64
+end
+
+Base.@kwdef mutable struct SinDecaySchedulePars <: LRScheduleParams
+    lr_max::Float64
+    lr_min::Float64
+    lr_period::Int64
+end
+
+
+struct NoSchedule{T<:Number} <: AbstractSchedule{false}
+    λ::T
+end
+(schedule::NoSchedule)(t) = schedule.λ 
+
+
+make_scheduler(pars::NoSchedulePars) = NoSchedule(pars.learning_rate)
+make_scheduler(pars::SinDecaySchedulePars) = SinDecay2(λ0=pars.lr_min, λ1=pars.lr_max, period=pars.lr_period)
+
+
 Base.@kwdef mutable struct Hyperparams
     data_file::String
     batch_size::Int64
-    learning_rate::Float64
+    lr_schedule_pars::LRScheduleParams 
     epochs::Int64
     width::Int64
     dropout_rate::Float64
@@ -167,7 +204,7 @@ function read_from_parquet(filename, trafos)
 
     =#
     feature_names = [:log_distance, :cos_obs_angle]
-    target_names = [:log_fit_alpha, :log_fit_theta, :log_det_fraction_scaled]
+    target_names = [:log_fit_alpha, :log_fit_theta, :neg_log_det_fraction_scaled]
 
     df_train, df_test = splitdf(results_df, 0.8)
 
@@ -182,8 +219,8 @@ end
 function get_data(args::Hyperparams)
 
     trafos = Dict(
-        (:det_fraction, :log_det_fraction) => :neg_log,
-        (:det_fraction, :log_det_fraction_scaled) => :neg_log_scale,
+        (:det_fraction, :neg_log_det_fraction) => :neg_log,
+        (:det_fraction, :neg_log_det_fraction_scaled) => :neg_log_scale,
         (:obs_angle, :cos_obs_angle) => :cos,
         (:fit_alpha, :log_fit_alpha) => :log,
         (:fit_theta, :log_fit_theta) => :log,
@@ -231,7 +268,9 @@ function train_mlp(; kws...)
 
     model = gpu(model)
     loss(x, y) = mse(model(x), y)
-    optimiser = ADAM(args.learning_rate)
+    optimiser = ADAM()
+    schedule = make_scheduler(args.lr_schedule_pars) 
+
 
     if args.tblogger
         tblogger = TBLogger(args.savepath, tb_increment)
@@ -258,7 +297,9 @@ function train_mlp(; kws...)
     @info "Starting training."
     Flux.trainmode!(model)
 
-    for epoch in 1:args.epochs
+    for (eta, epoch) in zip(schedule, 1:args.epochs)
+        optimiser.eta = eta
+
         for (x, y) in train_data
 
             gs = Flux.gradient(ps) do
@@ -276,7 +317,7 @@ function train_mlp(; kws...)
 end
 
 function source_to_input(source::CherenkovSegment, target::PhotonTarget)
-    em_rec_vec = source.position .- target.position
+    em_rec_vec = target.position .- source.position
     distance = norm(em_rec_vec)
     em_rec_vec = em_rec_vec ./ distance
     cos_obs_angle = dot(em_rec_vec, source.direction)

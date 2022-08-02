@@ -3,7 +3,7 @@ module Waveforms
 using ..PulseTemplates
 using Plots
 using NonNegLeastSquares
-using NNLS
+#using NNLS
 using DSP
 export Waveform
 export add_gaussian_white_noise, digitize_waveform, unfold_waveform, plot_waveform
