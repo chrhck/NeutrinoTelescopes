@@ -70,9 +70,9 @@ function rand(vol::Cylinder{T}) where {T}
 end
 
 function rand(vol::Cuboid{T}) where {T}
-    uni_x = Uniform(-vol.lx / 2, vol.lx / 2)
-    uni_y = Uniform(-vol.ly / 2, vol.ly / 2)
-    uni_z = Uniform(-vol.lz / 2, vol.lz / 2)
+    uni_x = Uniform(-vol.l_x / 2, vol.l_x / 2)
+    uni_y = Uniform(-vol.l_y / 2, vol.l_y / 2)
+    uni_z = Uniform(-vol.l_z / 2, vol.l_z / 2)
     return SA{T}[rand(uni_x), rand(uni_y), rand(uni_z)] + vol.center
 
 end

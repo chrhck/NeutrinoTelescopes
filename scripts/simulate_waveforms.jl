@@ -25,8 +25,6 @@ lp_cutoff = 125E-3
 
 spe = PMTFrontEnd.ExponTruncNormalSPE(expon_decay, 0.3, 1.0, 0.0, expon_weight)
 spe_d = PMTFrontEnd.make_spe_dist(spe)
-
-
 gumbel_width = PMTFrontEnd.gumbel_width_from_fwhm(gumbel_fwhm)
 pulse_model = PMTFrontEnd.GumbelPulse(gumbel_width, pulse_amplitude)
 pulse = PMTFrontEnd.make_pulse_dist(pulse_model)

@@ -354,7 +354,8 @@ function evaluate_model(
     medium::Medium.MediumProperties,
     precision::T,
     model::Flux.Chain,
-    trafos::AbstractVector{Symbol}
+    trafos::AbstractVector{Symbol},
+    max_dist::Number = 300
 ) where {U<:Detection.PhotonTarget,T<:Real}
 
     sources = LightYield.particle_to_elongated_lightsource(
@@ -366,29 +367,42 @@ function evaluate_model(
     )
 
     inputs = source_to_input(sources, targets)
+
+    mask = (inputs[1, :] .<= max_dist) && (inputs[1, :] .>= 1)
+    
     predictions::Matrix{Float32} = cpu(model(gpu(inputs)))
     Modelling.transform_model_output!(predictions, trafos)
     predictions_rshp = reshape(predictions, (3, size(sources, 1), size(targets, 1)))
+    mask_rshp = reshape(mask, (size(sources, 1), size(targets, 1)))
 
-    return predictions_rshp, sources
+    return predictions_rshp, sources, mask_rshp
 end
 
 function shape_mixture_per_module(
     params::AbstractArray{U,3},
-    sources::AbstractVector{V}
+    sources::AbstractVector{V},
+    mask::AbstractMatrix{Bool}
 ) where {U<:Real,V<:LightYield.CherenkovSegment}
 
     n_sources = size(params, 2)
     n_targets = size(params, 3)
 
+    if size(mask) != size(params)[2:3]
+        error("Mask has length $(length(mask)), expected: $(n_sources * n_targets)")
+    end
+
     T = MixtureModel{Univariate,Continuous,LocationScale{Float64,Continuous,Gamma{U}},Categorical{U,Vector{U}}}
     mixtures::Vector{T} = Vector{T}(undef, n_targets)
     mixtures_buf = Zygote.Buffer(mixtures)
 
+    probs = params[3, :, :]
+
+    masked_view = @view probs[mask]
+    masked_view .= 0
+
     @inbounds for i in 1:n_targets
         dists = [Gamma(params[1, j, i], params[2, j, i]) + sources[j].time for j in 1:n_sources]
-        probs = params[3, :, i] ./ sum(params[3, :, i])
-        mixtures_buf[i] = MixtureModel(dists, probs)
+        mixtures_buf[i] = MixtureModel(dists, probs[:, i] ./ sum(probs[:, i]))
     end
     mixtures = copy(mixtures_buf)
 end
@@ -401,20 +415,26 @@ function shape_mixture_per_module(
     model::Flux.Chain,
     trafos::AbstractVector{Symbol}) where {U<:Detection.PhotonTarget}
 
-    predictions, sources = evaluate_model(targets, particle, medium, precision, model, trafos)
-    shape_mixture_per_module(predictions, sources)
+    predictions, sources, mask = evaluate_model(targets, particle, medium, precision, model, trafos)
+    shape_mixture_per_module(predictions, sources, mask)
 end
 
 
 function poisson_dist_per_module(
     params::AbstractArray{U,3},
-    sources::AbstractVector{V}) where {U<:Real,V<:CherenkovSegment}
+    sources::AbstractVector{V},
+    mask::AbstractMatrix{Bool}) where {U<:Real,V<:CherenkovSegment}
 
     n_sources = size(params, 2)
     n_targets = size(params, 3)
 
-    pred = [sum([params[3, i, j] * sources[i].photons for i in 1:n_sources]) for j in 1:n_targets]
+    lin = LinearIndices((1:n_sources, 1:n_targets))
 
+    if size(mask) != size(params)[2:3]
+        error("Mask has length $(length(mask)), expected: $(n_sources * n_targets)")
+    end
+        
+    pred = [sum([params[3, i, j] * sources[i].photons for i in 1:n_sources if mask[i, j]]) for j in 1:n_targets]
 
     Poisson.(pred)
 end
@@ -428,8 +448,8 @@ function poisson_dist_per_module(
     trafos::AbstractVector{Symbol}
 ) where {U<:PhotonTarget}
 
-    predictions, sources = evaluate_model(targets, particle, medium, precision, model, trafos)
-    poisson_dist_per_module(predictions, sources)
+    predictions, sources, mask = evaluate_model(targets, particle, medium, precision, model, trafos)
+    poisson_dist_per_module(predictions, sources, mask)
 end
 
 

@@ -18,6 +18,7 @@ using ..Emission
 using ..Spectral
 using ..Medium
 using ..Utils
+using ..Types
 
 c_vac_m_p_ns = ustrip(u"m/ns", SpeedOfLightInVacuum)
 
@@ -188,14 +189,6 @@ function cherenkov_track_length(energy::Real, track_len_params::CherenkovTrackLe
     track_len_params.alpha * energy^track_len_params.beta
 end
 cherenkov_track_length(energy::Real, ptype::ParticleType) = cherenkov_track_length(energy, get_track_length_params(ptype))
-
-mutable struct Particle{T}
-    position::SVector{3,T}
-    direction::SVector{3,T}
-    time::T
-    energy::T
-    type::ParticleType
-end
 
 function particle_to_lightsource(
     particle::Particle{T},
