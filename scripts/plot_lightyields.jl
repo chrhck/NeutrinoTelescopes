@@ -48,13 +48,15 @@ plot(nodes, norms)
 
 lambdas = 200:1.:800
 
-
-
 plot(lambdas, get_refractive_index.(lambdas, Ref(medium)))
 plot(lambdas, get_dispersion.(lambdas, Ref(medium)))
 
 
+hobo_diff = diff(get_refractive_index.(lambdas, Ref(medium)))
+plot!(lambdas[2:end], hobo_diff)
 
+
+plot(group_velocity.(lambdas, Ref(medium)))
 
 angularDist_a = 0.39 
 angularDist_b = 2.61

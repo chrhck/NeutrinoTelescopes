@@ -6,14 +6,14 @@ using PhysicalConstants.CODATA2018
 using ..Utils
 
 export make_cascadia_medium_properties
-export salinity, pressure, temperature, vol_conc_small_part, vol_conc_large_part, radiation_length, density
+export salinity, pressure, temperature, vol_conc_small_part, vol_conc_large_part, radiation_length, density, group_velocity
 export get_refractive_index, get_scattering_length, get_absorption_length, get_dispersion
 export MediumProperties, WaterProperties
 
 @unit ppm "ppm" Partspermillion 1 // 1000000 false
 Unitful.register(Medium)
 
-c_vac = ustrip(u"m/s", SpeedOfLightInVacuum)
+c_vac_nm_ns = ustrip(u"nm/ns", SpeedOfLightInVacuum)
 
 abstract type MediumProperties{T} end
 
@@ -173,7 +173,10 @@ function get_refractive_index_fry(
     a01, a2, a3, a4 = _get_quan_fry_params(salinity, temperature, pressure)
 
     x = 1 / wavelength
-    return T(a01 + x * (a2 + x * (a3 + x * a4)))
+    #return T(a01 + x * (a2 + x * (a3 + x * a4)))
+
+    return T(a01 + x*a2 + x^2 * a3 + x^3 * a4)
+
 end
 
 
@@ -184,8 +187,8 @@ function get_dispersion_fry(
     pressure::Real) where {T <: Real}
 
     a01, a2, a3, a4 = _get_quan_fry_params(salinity, temperature, pressure)
-
-    return T((a2 + x * (a3 + x * a4)) * (a3 + x * a4) * a4 * -1/wavelength^2)
+    x = 1 / wavelength
+    return T(a2 + 2*x*a3 + 3*x^2*a4) * (-1)/wavelength^2
 end
 
 function get_refractive_index_fry(
@@ -229,9 +232,7 @@ get_dispersion(wavelength::Real, medium::WaterProperties) = get_dispersion_fry(
 function group_velocity(wavelength::Real, medium::MediumProperties)
     ref_ix = get_refractive_index(wavelength, medium)
     λ_0 = ref_ix * wavelength
-    c_vac / (ref_ix - λ_0)
-
-
+    c_vac_nm_ns / (ref_ix - λ_0 * get_dispersion(wavelength, medium))
 end
 
 
