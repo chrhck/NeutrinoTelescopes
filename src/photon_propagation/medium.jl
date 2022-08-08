@@ -1,16 +1,19 @@
 module Medium
 using Unitful
 using Base: @kwdef
+using PhysicalConstants.CODATA2018
 
 using ..Utils
 
 export make_cascadia_medium_properties
 export salinity, pressure, temperature, vol_conc_small_part, vol_conc_large_part, radiation_length, density
-export get_refractive_index, get_scattering_length, get_absorption_length
+export get_refractive_index, get_scattering_length, get_absorption_length, get_dispersion
 export MediumProperties, WaterProperties
 
 @unit ppm "ppm" Partspermillion 1 // 1000000 false
 Unitful.register(Medium)
+
+c_vac = ustrip(u"m/s", SpeedOfLightInVacuum)
 
 abstract type MediumProperties{T} end
 
@@ -101,32 +104,17 @@ vol_conc_large_part(x::WaterProperties) = x.vol_conc_large_part
 radiation_length(::T) where {T<:MediumProperties} = error("Not implemented for $T")
 radiation_length(x::WaterProperties) = x.radiation_length
 
+
 """
-get_refractive_index_fry(wavelength, salinity, temperature, pressure)
+    _get_quan_fry_params(salinity::Real, temperature::Real, pressure::Real)
 
-
-    The phase refractive index of sea water according to a model
-    from Quan&Fry. 
-
-    wavelength is given in nm, salinity in permille, temperature in °C and pressure in atm
-    
-    The original model is taken from:
-    X. Quan, E.S. Fry, Appl. Opt., 34, 18 (1995) 3477-3480.
-    
-    An additional term describing pressure dependence was included according to:
-    Wolfgang H.W.A. Schuster, "Measurement of the Optical Properties of the Deep
-    Mediterranean - the ANTARES Detector Medium.",
-    PhD thesis (2002), St. Catherine's College, Oxford
-    downloaded Jan 2011 from: http://www.physics.ox.ac.uk/Users/schuster/thesis0098mmjhuyynh/thesis.ps
-
-    Adapted from clsim (©Claudio Kopper)
+Helper function to get the parameters for the Quan & Fry formula as function of
+salinity, temperature and pressure.
 """
-
-function get_refractive_index_fry(
-    wavelength::T;
+function _get_quan_fry_params(
     salinity::Real,
     temperature::Real,
-    pressure::Real) where {T<:Real}
+    pressure::Real)
 
     n0 = 1.31405
     n1 = 1.45e-5
@@ -153,8 +141,51 @@ function get_refractive_index_fry(
     a3 = -n9
     a4 = n10
 
+    return a01, a2, a3, a4
+end
+
+"""
+get_refractive_index_fry(wavelength, salinity, temperature, pressure)
+
+
+    The phase refractive index of sea water according to a model
+    from Quan&Fry. 
+
+    wavelength is given in nm, salinity in permille, temperature in °C and pressure in atm
+    
+    The original model is taken from:
+    X. Quan, E.S. Fry, Appl. Opt., 34, 18 (1995) 3477-3480.
+    
+    An additional term describing pressure dependence was included according to:
+    Wolfgang H.W.A. Schuster, "Measurement of the Optical Properties of the Deep
+    Mediterranean - the ANTARES Detector Medium.",
+    PhD thesis (2002), St. Catherine's College, Oxford
+    downloaded Jan 2011 from: http://www.physics.ox.ac.uk/Users/schuster/thesis0098mmjhuyynh/thesis.ps
+
+    Adapted from clsim (©Claudio Kopper)
+"""
+function get_refractive_index_fry(
+    wavelength::T;
+    salinity::Real,
+    temperature::Real,
+    pressure::Real) where {T<:Real}
+
+    a01, a2, a3, a4 = _get_quan_fry_params(salinity, temperature, pressure)
+
     x = 1 / wavelength
     return T(a01 + x * (a2 + x * (a3 + x * a4)))
+end
+
+
+function get_dispersion_fry(
+    wavelength::T;
+    salinity::Real,
+    temperature::Real,
+    pressure::Real) where {T <: Real}
+
+    a01, a2, a3, a4 = _get_quan_fry_params(salinity, temperature, pressure)
+
+    return T((a2 + x * (a3 + x * a4)) * (a3 + x * a4) * a4 * -1/wavelength^2)
 end
 
 function get_refractive_index_fry(
@@ -186,6 +217,22 @@ get_refractive_index(wavelength::Unitful.Length, medium::MediumProperties) = get
     ustrip(u"nm", wavelength),
     medium)
 
+
+get_dispersion(wavelength::Real, medium::WaterProperties) = get_dispersion_fry(
+    wavelength,
+    salinity=salinity(medium),
+    temperature=temperature(medium),
+    pressure=pressure(medium)
+)
+
+
+function group_velocity(wavelength::Real, medium::MediumProperties)
+    ref_ix = get_refractive_index(wavelength, medium)
+    λ_0 = ref_ix * wavelength
+    c_vac / (ref_ix - λ_0)
+
+
+end
 
 
 """

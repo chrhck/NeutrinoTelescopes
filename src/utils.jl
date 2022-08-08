@@ -7,11 +7,16 @@ using Distributions
 
 export fast_linear_interp, transform_integral_range
 export integrate_gauss_quad
-export sph_to_cart
+export sph_to_cart, rodrigues_rotation
 export CategoricalSetDistribution
 
 const GL10 = gausslegendre(10)
 
+"""
+    fast_linear_interp(x_eval::T, xs::AbstractVector{T}, ys::AbstractVector{T})
+
+Linearly interpolate xs -> ys and evaluate x_eval on interpolation. Assume xs are sorted in ascending order.
+"""
 function fast_linear_interp(x_eval::T, xs::AbstractVector{T}, ys::AbstractVector{T}) where {T}
 
     lower = first(xs)
@@ -128,6 +133,35 @@ end
 
 Base.rand(pdist::CategoricalSetDistribution) = pdist.set[rand(pdist.cat)]
 
+"""
+    rodrigues_rotation(a, b, operand)
+
+Rodrigues rotation formula. Calculates rotation axis and angle given by rotation a to b.
+Apply the resulting rotation to operand.
+"""
+function rodrigues_rotation(a, b, operand)
+    # Rotate a to b and apply to operand
+    ax = cross(a, b)
+    axnorm = norm(ax)
+    ax = ax ./ axnorm
+    theta = asin(axnorm)
+    rotated = operand .* cos(theta) + (cross(ax, operand) .* sin(theta)) + (ax .* (1 - cos(theta)) .* dot(ax, operand))
+    return rotated
+end
 
 
+"""
+"""
+function sample_cherenkov_track_direction(T::Type)
+    # Mystery values from clsim
+    angularDist_a = T(0.39) 
+    angularDist_b = T(2.61)
+    angularDist_I = T(1) - exp(-angularDist_b * 2^angularDist_a)
+    
+    costheta =  max(T(1) - (-log(T(1) - rand(T)*angularDist_I)/angularDist_b)^(1/angularDist_a), T(-1))
+    phi = T(2*π)*rand(T)
+
+    return sph_to_cart(acos(costheta), phi)
+
+end
 end

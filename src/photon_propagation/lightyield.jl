@@ -96,6 +96,7 @@ long_parameter_a_edep(energy::Real, ptype::ParticleType) = long_parameter_a_edep
 long_parameter_b_edep(::Real, long_pars::LongitudinalParameters) = long_pars.b
 long_parameter_b_edep(energy::Real, ptype::ParticleType) = long_parameter_b_edep(energy, get_longitudinal_params(ptype))
 
+
 """
     longitudinal_profile(energy::Real, z::Real, medium::MediumProperties, long_pars::LongitudinalParameters)
     
@@ -111,7 +112,9 @@ function longitudinal_profile(
     b = long_parameter_b_edep(energy, long_pars)
     a = long_parameter_a_edep(energy, long_pars)
 
+
     b * ((t * b)^(a - 1.0) * exp(-(t * b)) / gamma(a))
+    
 end
 
 function longitudinal_profile(
@@ -119,6 +122,32 @@ function longitudinal_profile(
     longitudinal_profile(energy, z, medium, get_longitudinal_params(ptype))
 end
 
+"""
+    gamma_cdf(a, b, z)
+
+Cumulative Gamma distribution
+\$ int_0^z Gamma(a, b) \$
+"""
+gamma_cdf(a, b, z) = 1. - gamma(a, b*z) / gamma(a)
+
+
+function integral_long_profile(energy::Real, z_low::Real, z_high::Real, medium::MediumProperties, long_pars::LongitudinalParameters)
+    unit_conv = 10 # g/cm^2 / "kg/m^3" in m    
+    lrad = radiation_length(medium) / density(medium) * unit_conv # m
+
+    t_low = z_low / lrad
+    t_high = z_high / lrad
+    b = long_parameter_b_edep(energy, long_pars)
+    a = long_parameter_a_edep(energy, long_pars)
+
+
+    gamma_cdf(a, b, t_high) - gamma_cdf(a, b, t_low)
+
+end
+
+function integral_long_profile(energy::Real, z_low::Real, z_high::Real, medium::MediumProperties, ptype::ParticleType)
+    integral_long_profile(energy, z_low, z_high, medium, get_longitudinal_params(ptype))
+end
 
 function fractional_contrib_long!(
     energy::Real,
@@ -132,18 +161,12 @@ function fractional_contrib_long!(
         error("Grid and output are not of the same length")
     end
 
-    int_range = extrema(z_grid)
-    norm = integrate_gauss_quad(
-        z -> longitudinal_profile(energy, z, medium, long_pars),
-        int_range[1], int_range[2])
+    norm = integral_long_profile(energy, z_grid[1], z_grid[end], medium, long_pars)
 
     output[1] = 0
     @inbounds for i in 1:size(z_grid, 1)-1
         output[i+1] = (
-            1 / norm *
-            integrate_gauss_quad(
-                z -> longitudinal_profile(energy, z, medium, long_pars),
-                z_grid[i], z_grid[i+1])[1]
+            1 / norm * integral_long_profile(energy, z_grid[i], z_grid[i+1], medium, long_pars)
         )
     end
     output

@@ -24,45 +24,54 @@ using ..Emission
 using ..Detection
 
 
+"""
+    uniform(minval::T, maxval::T) where {T}
+
+Convenience function for sampling uniform values in [minval, maxval]
+"""
 @inline function uniform(minval::T, maxval::T) where {T}
     uni = rand(T)
     return minval + uni * (maxval - minval)
 end
 
-@inline function cuda_hg_scattering_func(g::T) where {T}
+"""
+    cuda_hg_scattering_func(g::Real)
+
+CUDA-optimized version of Henyey-Greenstein scattering in one plane.
+
+# Arguments
+- `g::Real`: mean scattering angle
+
+# Returns
+- `typeof(g)` cosine of a scattering angle sampled from the distribution
+
+"""
+@inline function cuda_hg_scattering_func(g::Real)
+    T = typeof(g)
     """Henyey-Greenstein scattering in one plane."""
     eta = rand(T)
     #costheta::T = (1 / (2 * g) * (1 + g^2 - ((1 - g^2) / (1 + g * (2 * eta - 1)))^2))
-
     costheta::T = (1 / (2 * g) * (CUDA.fma(g, g, 1) - (CUDA.fma(-g, g, 1) / (CUDA.fma(g, (CUDA.fma(2, eta, -1)), 1)))^2))
     CUDA.clamp(costheta, T(-1), T(1))
 end
 
+"""
+    initialize_direction_isotropic(T::Type)
 
-@inline function sph_to_cart(theta::T, phi::T) where {T}
-    sin_theta, cos_theta = CUDA.sincos(theta)
-    sin_phi, cos_phi = CUDA.sincos(phi)
+Sample a direction isotropically
 
-    x::T = cos_phi * sin_theta
-    y::T = sin_phi * sin_theta
-    z::T = cos_theta
+# Arguments
+- `T::Type`: desired eltype of the return value
 
-    @SVector[x, y, z]
-end
+# Returns
+- StaticVector{3, T}: Cartesian coordinates of the sampled direction
 
+"""
 @inline function initialize_direction_isotropic(T::Type)
     theta = uniform(T(-1), T(1))
     phi = uniform(T(0), T(2 * pi))
     sph_to_cart(theta, phi)
 end
-
-"""
-    fast_linear_interp(x_eval::T, xs::AbstractVector{T}, ys::AbstractVector{T})
-
-Linearly interpolate xs -> ys and evaluate x_eval on interpolation. Assume xs are sorted in ascending order.
-"""
-
-
 
 
 @inline initialize_direction(::AngularEmissionProfile{U,T}) where {U,T} = throw(ArgumentError("Cannot initialize $U"))
@@ -75,7 +84,6 @@ Linearly interpolate xs -> ys and evaluate x_eval on interpolation. Assume xs ar
     fast_linear_interp(rand(T), spectrum.knots, T(0), T(1))
 end
 
-
 function initialize_photons!(source::PhotonSource{T,U,V}, photon_container::AbstractMatrix{T}) where {T,U,V}
     for i in 1:source.photons
         photon_container[1:3, i] = source.position
@@ -85,88 +93,6 @@ function initialize_photons!(source::PhotonSource{T,U,V}, photon_container::Abst
     end
 
     return nothing
-end
-
-"""
-function update_direction!(this_dir::AbstractArray{T}) where {T}
-
-    Update the photon direction using scattering function.
-
-    New direction is relative to e_z. Axis of rotation defined by rotating e_z to old dir and applying
-    that transformation to new_dir.
-
-    Rodrigues rotation formula:
-        ax = e_z x dir
-        #theta = acos(dir * new_dir)
-        theta = asin(dir x new_dir)
-
-        axop = axis x new_dir
-        rotated = new_dir * cos(theta) + sin(theta) * (axis x new_dir) + (1-cos(theta)) * (axis * new_dir) * axis
-
-"""
-@inline function update_direction!(this_dir::AbstractArray{T}) where {T}
-    
-    # Calculate new direction (relative to e_z)
-    cos_sca_theta = cuda_hg_scattering_func(T(0.99))
-    sin_sca_theta = sqrt(CUDA.fma(-cos_theta, cos_theta, 1))
-    sca_phi = uniform(T(0), T(2 * pi))
-
-    new_dir_1 = cos(sca_phi) * sin_sca_theta
-    new_dir_2 = sin(sca_phi) * sin_sca_theta
-    new_dir_3 = cos_sca_theta
-
-
-
-    if abs(this_dir[3]) == 1.0f0
-
-        sign = sign(this_dir[3])
-        this_dir[1] = new_dir_1
-        this_dir[2] = sign * new_dir_2
-        this_dir[3] = sign * new_dir_3
-
-        return
-    end
-
-    # Determine axis of rotation (cross product of e_z and old_dir )    
-    ax1 = -this_dir[2]
-    ax2 = this_dir[1]
-
-    # Determine angle of rotation (cross product e_z and old_dir)
-    # sin(theta) = | e_z x old_dir |
-
-    sinthetasq = 1 - this_dir[3]^2
-    costheta = sqrt(1 - sinthetasq)
-    sintheta = sqrt(sinthetasq)
-
-
-    # cross product of axis with new_ direction
-    axop1 = ax2 * new_dir_3
-    axop2 = -ax1 * new_dir_3
-    axop3 = ax1 * new_dir_2 - ax2 * new_dir_1
-
-    axopdot = ax1 * new_dir_1 + ax2 * new_dir_2
-
-    new_x = new_dir_1 * costheta + axop1 * sintheta + ax1 * axopdot * (1 - costheta)
-    new_y = new_dir_2 * costheta + axop2 * sintheta + ax2 * axopdot * (1 - costheta)
-    new_z = new_dir_3 * costheta + axop3 * sintheta
-
-    norm = sqrt(new_x^2 + new_y^2 + new_z^2)
-
-    this_dir[1] = new_x / norm
-    this_dir[2] = new_y / norm
-    this_dir[3] = new_z / norm
-    return
-
-end
-
-function rodrigues_rotation(a, b, operand)
-    # Rotate a to b and apply to operand
-    ax = cross(a, b)
-    axnorm = norm(ax)
-    ax = ax ./ axnorm
-    theta = asin(axnorm)
-    rotated = operand .* cos(theta) + (cross(ax, operand) .* sin(theta)) + (ax .* (1 - cos(theta)) .* dot(ax, operand))
-    return rotated
 end
 
 @inline function rotate_to_axis(old_dir::SVector{3,T}, new_dir::SVector{3,T}) where {T}
