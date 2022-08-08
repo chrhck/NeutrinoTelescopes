@@ -9,6 +9,7 @@ using Base.Iterators
 
 export PhotonTarget, DetectionSphere, p_one_pmt_acc
 export make_detector_cube, make_targets
+export area_acceptance
 
 const PROJECT_ROOT = pkgdir(Detection)
 
@@ -17,6 +18,15 @@ abstract type PhotonTarget{T<:Real} end
 struct DetectionSphere{T<:Real} <: PhotonTarget{T}
     position::SVector{3,T}
     radius::T
+    n_pmts::Int64
+    pmt_area::T
+end
+
+function area_acceptance(target::DetectionSphere)
+    total_pmt_area = target.n_pmts * target.pmt_area
+    detector_surface = 4*π * target.radius^2
+
+    return total_pmt_area / detector_surface
 end
 
 
@@ -53,10 +63,9 @@ function make_detector_cube(nx, ny, nz, spacing_vert, spacing_hor)
 
 end
 
-function make_targets(positions)
-    map(pos -> DetectionSphere(pos, 0.21), positions)
+function make_targets(positions, n_pmts, pmt_area)
+    map(pos -> DetectionSphere(pos, 0.21, n_pmts, pmt_area), positions)
 end
-
 
 
 
