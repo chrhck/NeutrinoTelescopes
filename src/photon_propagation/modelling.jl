@@ -27,6 +27,7 @@ using ..Detection
 using ..Medium
 using ..PhotonPropagationCuda
 using ..LightYield
+using ..Types
 
 
 export get_dir_reweight, fit_photon_dist, make_photon_fits
@@ -368,11 +369,17 @@ function evaluate_model(
 
     inputs = source_to_input(sources, targets)
 
-    mask = (inputs[1, :] .<= max_dist) && (inputs[1, :] .>= 1)
+    log10_max_dist = log10(max_dist)
+
+    mask = (inputs[1, :] .<= log10_max_dist) .&& (inputs[1, :] .>= 0)
     
     predictions::Matrix{Float32} = cpu(model(gpu(inputs)))
     Modelling.transform_model_output!(predictions, trafos)
+
     predictions_rshp = reshape(predictions, (3, size(sources, 1), size(targets, 1)))
+    
+    predictions_rshp[3, :, :] = mapslices(slice -> slice .* area_acceptance.(targets), predictions_rshp[3, :, :], dims=2) 
+    
     mask_rshp = reshape(mask, (size(sources, 1), size(targets, 1)))
 
     return predictions_rshp, sources, mask_rshp
@@ -397,12 +404,13 @@ function shape_mixture_per_module(
 
     probs = params[3, :, :]
 
-    masked_view = @view probs[mask]
-    masked_view .= 0
+    probs[.!mask] .= 0
 
     @inbounds for i in 1:n_targets
-        dists = [Gamma(params[1, j, i], params[2, j, i]) + sources[j].time for j in 1:n_sources]
-        mixtures_buf[i] = MixtureModel(dists, probs[:, i] ./ sum(probs[:, i]))
+        if any(probs[:, i] .> 0)
+            dists = [Gamma(params[1, j, i], params[2, j, i]) + sources[j].time for j in 1:n_sources]
+            mixtures_buf[i] = MixtureModel(dists, probs[:, i] ./ sum(probs[:, i]))
+        end
     end
     mixtures = copy(mixtures_buf)
 end
@@ -428,7 +436,6 @@ function poisson_dist_per_module(
     n_sources = size(params, 2)
     n_targets = size(params, 3)
 
-    lin = LinearIndices((1:n_sources, 1:n_targets))
 
     if size(mask) != size(params)[2:3]
         error("Mask has length $(length(mask)), expected: $(n_sources * n_targets)")
@@ -465,7 +472,11 @@ function sample_event(
     event = Vector{Vector{Float64}}(undef, size(poissons))
     for i in eachindex(poissons)
         n_ph = rand(poissons[i])
-        event[i] = rand(shapes[i], n_ph)
+        if n_ph > 0
+            event[i] = rand(shapes[i], n_ph)
+        else
+            event[i] = []
+        end
     end
 
     event
