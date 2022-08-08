@@ -22,6 +22,6 @@ using .Emission
 using .LightYield
 
 
-export Medium, Spectral, Emission, LightYield, Modelling, Utils, Detection, Types
+export Medium, Spectral, Emission, LightYield, Modelling, Utils, Detection, Types, PhotonPropagationCuda
 
 end

@@ -6,14 +6,14 @@ using PhysicalConstants.CODATA2018
 using ..Utils
 
 export make_cascadia_medium_properties
-export salinity, pressure, temperature, vol_conc_small_part, vol_conc_large_part, radiation_length, density, group_velocity
-export get_refractive_index, get_scattering_length, get_absorption_length, get_dispersion
+export salinity, pressure, temperature, vol_conc_small_part, vol_conc_large_part, radiation_length, density
+export get_refractive_index, get_scattering_length, get_absorption_length, get_dispersion, get_group_velocity
 export MediumProperties, WaterProperties
 
 @unit ppm "ppm" Partspermillion 1 // 1000000 false
 Unitful.register(Medium)
 
-c_vac_nm_ns = ustrip(u"nm/ns", SpeedOfLightInVacuum)
+c_vac_m_ns = ustrip(u"m/ns", SpeedOfLightInVacuum)
 
 abstract type MediumProperties{T} end
 
@@ -229,10 +229,10 @@ get_dispersion(wavelength::Real, medium::WaterProperties) = get_dispersion_fry(
 )
 
 
-function group_velocity(wavelength::Real, medium::MediumProperties)
+function get_group_velocity(wavelength::Real, medium::MediumProperties)
     ref_ix = get_refractive_index(wavelength, medium)
     λ_0 = ref_ix * wavelength
-    c_vac_nm_ns / (ref_ix - λ_0 * get_dispersion(wavelength, medium))
+    c_vac_m_ns / (ref_ix - λ_0 * get_dispersion(wavelength, medium))
 end
 
 

@@ -9,6 +9,7 @@ export fast_linear_interp, transform_integral_range
 export integrate_gauss_quad
 export sph_to_cart, rodrigues_rotation
 export CategoricalSetDistribution
+export sample_cherenkov_track_direction
 
 const GL10 = gausslegendre(10)
 
@@ -164,4 +165,39 @@ function sample_cherenkov_track_direction(T::Type)
     return sph_to_cart(acos(costheta), phi)
 
 end
+
+"""
+    rand_gamma(shape, scale)
+
+Sample gamma variates when shape < 1
+"""
+function rand_gamma(shape, scale)
+    d = shape - 1/3 + 1.0
+    c = 1.0 / sqrt(9.0 * d)
+    κ = d * scale
+
+    rng_val = 0.
+    while true
+        x = randn()
+        v = 1.0 + c * x
+        while v <= 0.0
+            x = randn()
+            v = 1.0 + c * x
+        end
+        v *= (v * v)
+        u = rand()
+        x2 = x * x
+        if u < 1.0 - 0.331 * abs2(x2) || log(u) < 0.5 * x2 + d * (1.0 - v + log(v))
+            rng_val = v*κ
+            break
+        end
+    end
+
+    nia = -1.0 / shape
+    randexp = -log(rand())
+    rng_val * exp(randexp * nia)
+
+end
+
+
 end

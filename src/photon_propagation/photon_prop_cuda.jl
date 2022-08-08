@@ -55,6 +55,15 @@ CUDA-optimized version of Henyey-Greenstein scattering in one plane.
     CUDA.clamp(costheta, T(-1), T(1))
 end
 
+
+mutable struct PhotonState{T}
+    position::SVector{3, T}
+    direction::SVector{3, T}
+    time::T
+    wavelength::T
+end
+
+
 """
     initialize_direction_isotropic(T::Type)
 
@@ -73,9 +82,16 @@ Sample a direction isotropically
     sph_to_cart(theta, phi)
 end
 
+@inline function initialize_direction_cherenkov(T::Type)
 
-@inline initialize_direction(::AngularEmissionProfile{U,T}) where {U,T} = throw(ArgumentError("Cannot initialize $U"))
-@inline initialize_direction(::AngularEmissionProfile{:IsotropicEmission,T}) where {T} = initialize_direction_isotropic(T)
+    # Sample a direction of a "Cherenkov track". Dir is relative to e_z
+    dir::SVector{3, T} = sample_cherenkov_track_direction(T)
+
+    dir_rot = rotate_to_axis()
+
+
+
+end
 
 @inline initialize_wavelength(::T) where {T<:Spectrum} = throw(ArgumentError("Cannot initialize $T"))
 @inline initialize_wavelength(spectrum::Monochromatic{T}) where {T} = spectrum.wavelength
@@ -83,6 +99,32 @@ end
 @inline function initialize_wavelength(spectrum::CherenkovSpectrum{T}) where {T}
     fast_linear_interp(rand(T), spectrum.knots, T(0), T(1))
 end
+
+@inline initialize_direction(::AngularEmissionProfile{U,T}) where {U,T} = throw(ArgumentError("Cannot initialize $U"))
+
+@inline initialize_direction(::AngularEmissionProfile{:CherenkovEmission,T}) where {T} = initialize_direction_cherenkov(T)
+
+
+@inline initialize_photon_state(source::PhotonSource{T, U, V}) where {T, U, V <: AngularEmissionProfile{:IsotropicEmission,T}}
+    wl = initialize_wavelength(source.spectrum)
+    pos = source.position
+    dir = initialize_direction_isotropic(T)
+
+   PhotonState(pos, dir, T(0), wl)
+end
+
+@inline initialize_photon_state(source::PhotonSource{T, U, V}) where {T, U, V <: AngularEmissionProfile{:CherenkovEmission,T}}
+    wl = initialize_wavelength(source.spectrum)
+    pos = 
+    dir = initialize_direction_isotropic(T)
+
+   PhotonState(pos, dir, T(0), wl)
+end
+
+
+
+
+
 
 function initialize_photons!(source::PhotonSource{T,U,V}, photon_container::AbstractMatrix{T}) where {T,U,V}
     for i in 1:source.photons
@@ -527,7 +569,7 @@ function calculate_max_stack_size(total_mem, blocks)
 end
 
 
-function propagate_distance(distance::Float32, medium::MediumProperties, n_ph_gen::Int64)
+function propagate_distance(distance::Float32, medium::MediumProperties, n_ph_gen::Int64, n_pmts=16, pmt_area=Float32((75e-3 / 2)^2*π))
 
     target_radius = 0.21f0
     source = PhotonSource(
@@ -537,7 +579,7 @@ function propagate_distance(distance::Float32, medium::MediumProperties, n_ph_ge
         n_ph_gen,
         CherenkovSpectrum((300.0f0, 800.0f0), 20, medium),
         AngularEmissionProfile{:IsotropicEmission,Float32}(),)
-    target = DetectionSphere(@SVector[0.0f0, 0.0f0, distance], target_radius)
+    target = DetectionSphere(@SVector[0.0f0, 0.0f0, distance], target_radius, n_pmts, pmt_area)
 
     threads = 512
     blocks = 64
@@ -607,9 +649,10 @@ function propagate_distance(distance::Float32, medium::MediumProperties, n_ph_ge
 
     ref_ix = get_refractive_index.(wls, Ref(medium))
     c_vac = ustrip(u"m/ns", SpeedOfLightInVacuum)
-    c_n = (c_vac ./ ref_ix)
+    c_grp = get_group_velocity.(wls, Ref(medium))
 
-    photon_times = distt ./ c_n
+
+    photon_times = distt ./ c_grp
     tgeo = (distance - target_radius) ./ (c_vac / get_refractive_index(800.0, medium))
     tres = (photon_times .- tgeo)
     thetas = map(dir -> acos(dir[3]), directions)

@@ -138,7 +138,7 @@ function integral_long_profile(energy::Real, z_low::Real, z_high::Real, medium::
 
 end
 
-function integral_long_profile(energy::Real, z_low::Real, z_high::Real, medium::MediumProperties, ptype::ParticleType)
+function integral_long_profile(energy::Real, z_low::Real, z_high::Real, medium::MediumProperties, ptype::Symbol)
     integral_long_profile(energy, z_low, z_high, medium, get_longitudinal_params(ptype))
 end
 
