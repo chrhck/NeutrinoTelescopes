@@ -2,18 +2,18 @@ module Types
 
 using StaticArrays
 
-export ParticleType, EPlus, EMinus, Gamma
+export ParticleType, PEPlus, PEMinus, PGamma
 export Particle
 
 abstract type ParticleType end
 
-struct EPlus <:ParticleType end
-struct EMinus <:ParticleType end
-struct Gamma <:ParticleType end
+struct PEPlus <:ParticleType end
+struct PEMinus <:ParticleType end
+struct PGamma <:ParticleType end
 
-pdg_code(::Type{EPlus}) = -11
-pdg_code(::Type{EMinus}) = 11
-pdg_code(::Type{Gamma}) = 22
+pdg_code(::Type{PEPlus}) = -11
+pdg_code(::Type{PEMinus}) = 11
+pdg_code(::Type{PGamma}) = 22
 
 mutable struct Particle{T, PType <: ParticleType}
     position::SVector{3,T}

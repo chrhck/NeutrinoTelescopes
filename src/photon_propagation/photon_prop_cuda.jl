@@ -531,17 +531,30 @@ function propagate_distance(distance::Float32, medium::MediumProperties, n_ph_ge
         n_ph_gen,
         CherenkovSpectrum((300.0f0, 800.0f0), 20, medium),
         AngularEmissionProfile{:IsotropicEmission,Float32}(),
-        EMinus)
+        PEMinus)
 
     target = DetectionSphere(@SVector[0.0f0, 0.0f0, distance], target_radius, n_pmts, pmt_area)
 
     threads = 512
-    blocks = 64
+    blocks = 92
 
     avail_mem = CUDA.totalmem(collect(CUDA.devices())[1])
     max_total_stack_len = calculate_max_stack_size(0.5*avail_mem, blocks)
 
     @debug "Max stack size (90%): $max_total_stack_len"
+
+    #=
+     ckernel = @cuda launch=false cuda_propagate_photons!(
+        positions, directions, wavelengths, dist_travelled, times, stack_idx, n_ph_sim, err_code, stack_len, Int64(0),
+        Val(source), target.position, target.radius, Val(medium))
+
+    config = launch_configuration(ckernel.fun, shmem=sizeof(Int64))
+    
+    ckernel(
+        positions, directions, wavelengths, dist_travelled, times, stack_idx, n_ph_sim, err_code, stack_len, Int64(0),
+        Val(source), target.position, target.radius, Val(medium); threads=config.threads, blocks=config.blocks, shmem=sizeof(Int64))
+    =#
+
 
     if n_ph_gen > max_total_stack_len
         @debug "Estimating acceptance fraction"
@@ -558,7 +571,7 @@ function propagate_distance(distance::Float32, medium::MediumProperties, n_ph_ge
             Int64(test_nph),
             CherenkovSpectrum((300.0f0, 800.0f0), 20, medium),
             AngularEmissionProfile{:IsotropicEmission,Float32}(),
-            EMinus)
+            PEMinus)
 
         @cuda threads = threads blocks = blocks shmem = sizeof(Int64) cuda_propagate_photons!(
             positions, directions, wavelengths, dist_travelled, times, stack_idx, n_ph_sim, err_code, stack_len, Int64(0),
@@ -585,10 +598,11 @@ function propagate_distance(distance::Float32, medium::MediumProperties, n_ph_ge
     positions, directions, wavelengths, dist_travelled, times, stack_idx, n_ph_sim = initialize_photon_arrays(stack_len, blocks, Float32)
     err_code = CuVector(zeros(Int32, 1))
 
+
     @cuda threads = threads blocks = blocks shmem = sizeof(Int64) cuda_propagate_photons!(
         positions, directions, wavelengths, dist_travelled, times, stack_idx, n_ph_sim, err_code, stack_len, Int64(0),
         Val(source), target.position, target.radius, Val(medium))
-
+    
     if all(stack_idx .== 0)
         @warn "No photons survived (distance=$distance, n_ph_gen: $n_ph_gen)"
         return DataFrame()

@@ -121,8 +121,8 @@ Runs the photon propagation for multiple distances and reweights those simulatio
 
 # ╔═╡ 74b11928-fe9c-11ec-1d37-01f9b1e48fbe
 begin	
-	#results_df = make_photon_fits(Int64(1E8), Int64(1E5), 250, 250, 300f0)
-	#write_parquet("../assets/photon_fits.parquet", results_df)
+	results_df = make_photon_fits(Int64(1E8), Int64(1E5), 250, 250, 300f0)
+	write_parquet("../assets/photon_fits.parquet", results_df)
 	results_df = read_parquet("../assets/photon_fits.parquet")
 end
 

@@ -67,13 +67,13 @@ const CherenkovTrackLengthParametersGamma = CherenkovTrackLengthParameters(
 end
 
 
-get_longitudinal_params(::Type{EPlus}) = LongitudinalParametersEPlus
-get_longitudinal_params(::Type{EMinus}) = LongitudinalParametersEMinus
-get_longitudinal_params(::Type{Gamma}) = LongitudinalParametersGamma
+get_longitudinal_params(::Type{PEPlus}) = LongitudinalParametersEPlus
+get_longitudinal_params(::Type{PEMinus}) = LongitudinalParametersEMinus
+get_longitudinal_params(::Type{PGamma}) = LongitudinalParametersGamma
 
-get_track_length_params(::Type{EPlus}) = CherenkovTrackLengthParametersEPlus
-get_track_length_params(::Type{EMinus}) = CherenkovTrackLengthParametersEMinus
-get_track_length_params(::Type{Gamma}) = CherenkovTrackLengthParametersGamma
+get_track_length_params(::Type{PEPlus}) = CherenkovTrackLengthParametersEPlus
+get_track_length_params(::Type{PEMinus}) = CherenkovTrackLengthParametersEMinus
+get_track_length_params(::Type{PGamma}) = CherenkovTrackLengthParametersGamma
 
 function long_parameter_a_edep(
     energy::Real,

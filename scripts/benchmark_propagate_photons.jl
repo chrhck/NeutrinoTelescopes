@@ -10,7 +10,7 @@ using Plots
 #global_logger(debuglogger)
 
 n_photons = Int64(1E5)
-distance = 25f0
+distance = 80f0
 medium = Medium.make_cascadia_medium_properties(Float32)
 
 
