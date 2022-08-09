@@ -22,6 +22,10 @@ using ..Medium
 using ..Spectral
 using ..Emission
 using ..Detection
+using ..LightYield
+using ..Types
+
+const c_vac_m_ns = ustrip(u"m/ns", SpeedOfLightInVacuum)
 
 
 """
@@ -56,7 +60,7 @@ CUDA-optimized version of Henyey-Greenstein scattering in one plane.
 end
 
 
-mutable struct PhotonState{T}
+struct PhotonState{T}
     position::SVector{3, T}
     direction::SVector{3, T}
     time::T
@@ -82,46 +86,47 @@ Sample a direction isotropically
     sph_to_cart(theta, phi)
 end
 
-@inline function initialize_direction_cherenkov(T::Type)
-
-    # Sample a direction of a "Cherenkov track". Dir is relative to e_z
-    dir::SVector{3, T} = sample_cherenkov_track_direction(T)
-
-    dir_rot = rotate_to_axis()
-
-
-
-end
 
 @inline initialize_wavelength(::T) where {T<:Spectrum} = throw(ArgumentError("Cannot initialize $T"))
 @inline initialize_wavelength(spectrum::Monochromatic{T}) where {T} = spectrum.wavelength
-
 @inline function initialize_wavelength(spectrum::CherenkovSpectrum{T}) where {T}
     fast_linear_interp(rand(T), spectrum.knots, T(0), T(1))
 end
 
-@inline initialize_direction(::AngularEmissionProfile{U,T}) where {U,T} = throw(ArgumentError("Cannot initialize $U"))
-
-@inline initialize_direction(::AngularEmissionProfile{:CherenkovEmission,T}) where {T} = initialize_direction_cherenkov(T)
-
-
-@inline initialize_photon_state(source::PhotonSource{T, U, V}) where {T, U, V <: AngularEmissionProfile{:IsotropicEmission,T}}
+@inline function initialize_photon_state(source::PhotonSource{T, U, V, W}, medium) where {T, U, V <: AngularEmissionProfile{:IsotropicEmission,T}, W}
     wl = initialize_wavelength(source.spectrum)
     pos = source.position
     dir = initialize_direction_isotropic(T)
-
-   PhotonState(pos, dir, T(0), wl)
+    PhotonState(pos, dir, T(0), wl)
 end
 
-@inline initialize_photon_state(source::PhotonSource{T, U, V}) where {T, U, V <: AngularEmissionProfile{:CherenkovEmission,T}}
+@inline function initialize_photon_state(source::PhotonSource{T, U, V, W}, medium::MediumProperties) where {T, U, V <: AngularEmissionProfile{:CherenkovEmission,T}, W}
     wl = initialize_wavelength(source.spectrum)
-    pos = 
-    dir = initialize_direction_isotropic(T)
 
-   PhotonState(pos, dir, T(0), wl)
+    long_params = get_longitudinal_params(W)
+
+    scale = T(long_parameter_b_edep(energy, long_params))
+    shape = T(1/long_parameter_a_edep(energy, long_params))
+
+    long_pos = rand_gamma(shape, scale)
+
+    pos::SVector{3, T} = source.pos + long_pos * source.dir
+    time = source.time + long_pos / T(c_vac_m_ns)
+
+    
+    # Sample a direction of a "Cherenkov track". Dir is relative to e_z
+    track_dir::SVector{3, T} = sample_cherenkov_track_direction(T)
+    dir_rot = rotate_to_axis(source.direction, track_dir)
+ 
+    # Sample a photon direction (relative to e_z)
+    theta_cherenkov = get_cherenkov_angle(wl, medium)
+    phi = uniform(T(0), T(2 * pi))
+
+    ph_dir = sph_to_cart(theta_cherenkov, phi)
+    ph_dir_rot = rotate_to_axis(dir_rot, ph_dir)
+
+    PhotonState(pos, ph_dir_rot, time, wl)
 end
-
-
 
 
 
@@ -233,6 +238,7 @@ function cuda_propagate_photons!(
     out_directions::CuDeviceVector{SVector{3,T}},
     out_wavelengths::CuDeviceVector{T},
     out_dist_travelled::CuDeviceVector{T},
+    out_times::CuDeviceVector{T},
     out_stack_pointers::CuDeviceVector{Int64},
     out_n_ph_simulated::CuDeviceVector{Int64},
     out_err_code::CuDeviceVector{Int32},
@@ -268,6 +274,8 @@ function cuda_propagate_photons!(
     safe_margin = max(0, (blockdim - warpsize))
     n_photons_simulated = Int64(0)
 
+
+
     @inbounds for i in 1:this_n_photons
 
         if cache[1] > (ix_offset + stack_len - safe_margin)
@@ -276,18 +284,21 @@ function cuda_propagate_photons!(
             break
         end
 
-        dir::SVector{3,T} = initialize_direction(source.emission_profile)
-        initial_dir = copy(dir)
-        wavelength::T = initialize_wavelength(source.spectrum)
-        pos::SVector{3,T} = source.position
+        photon_state = initialize_photon_state(source, medium)
 
-        t0 = source.time
+        dir::SVector{3,T} = photon_state.direction
+        initial_dir = copy(dir)
+        wavelength::T = photon_state.wavelength
+        pos::SVector{3,T} = photon_state.position
+
+        time = photon_state.time
         dist_travelled = T(0)
 
         sca_len::T = get_scattering_length(wavelength, medium)
+        c_grp::T = get_group_velocity(wavelength, medium)
 
 
-        steps::Int32 = 10
+        steps::Int32 = 15
         for nstep in Int32(1):steps
 
             eta = rand(T)
@@ -324,10 +335,12 @@ function cuda_propagate_photons!(
                     pos = update_position(pos, dir, d)
                     #@cuprintln("Thread: $thread, Block $block, photon: $i, Intersected, stepped to $(pos[1])")
                     dist_travelled += d
+                    time += d / c_grp
                 end
             else
                 pos = update_position(pos, dir, step_size)
                 dist_travelled += step_size
+                time += step_size / c_grp
                 dir = update_direction(dir)
             end
 
@@ -341,6 +354,7 @@ function cuda_propagate_photons!(
                 out_directions[stack_idx] = initial_dir
                 out_dist_travelled[stack_idx] = dist_travelled
                 out_wavelengths[stack_idx] = wavelength
+                out_times[stack_idx] = time
                 CUDA.atomic_xchg!(pointer(out_stack_pointers, block), stack_idx)
                 break
             end
@@ -384,12 +398,14 @@ end
 
 
 function initialize_photon_arrays(stack_length::Int32, blocks, type::Type)
-    (CuVector(zeros(SVector{3,type}, stack_length * blocks)),
-        CuVector(zeros(SVector{3,type}, stack_length * blocks)),
-        CuVector(zeros(type, stack_length * blocks)),
-        CuVector(zeros(type, stack_length * blocks)),
-        CuVector(zeros(Int64, blocks)),
-        CuVector(zeros(Int64, 1))
+    (   
+        CuVector(zeros(SVector{3,type}, stack_length * blocks)), # position
+        CuVector(zeros(SVector{3,type}, stack_length * blocks)), # direction
+        CuVector(zeros(type, stack_length * blocks)), # wavelength
+        CuVector(zeros(type, stack_length * blocks)), # dist travelled
+        CuVector(zeros(type, stack_length * blocks)), # time
+        CuVector(zeros(Int64, blocks)), # stack_idx
+        CuVector(zeros(Int64, 1)) # nphotons_simulated
     )
 end
 
@@ -422,26 +438,6 @@ function launch_kernel(pos, dir, dist_travelled, sca_coeffs, intersected, target
 
 end
 
-function prepare_and_launch_kernel(photons_step::AbstractMatrix{T}, target::PhotonTarget{T}, steps::UInt16) where {T}
-    length = size(photons_step, 2)
-    positions = CuMatrix(photons_step[1:3, :])
-    directions = CuMatrix(photons_step[4:6, :])
-    times = CuVector{T}(photons_step[7, :])
-    sca_coeffs = CuVector{T}(scattering_coeff.(photons_step[8, :]))
-    dist_travelled = CuVector(zeros(T, length))
-    intersected = CuVector(zeros(Bool, length))
-
-    # Seeding might be dangerous 
-    launch_kernel(positions, directions, dist_travelled, sca_coeffs, intersected, target, steps, rand(UInt32))
-    result = Matrix{T}(undef, 8, length)
-    result[1:3, :] = Matrix{T}(positions)
-    result[4:6, :] = Matrix{T}(directions)
-    result[7, :] = Vector{T}(dist_travelled)
-    result[8, :] = Vector{T}(intersected)
-    return result
-end
-
-
 
 function split_source(source::PhotonSource{T,U,V}, max_photons::Integer) where {T,U,V}
     if source.photons < max_photons
@@ -457,50 +453,6 @@ function split_source(source::PhotonSource{T,U,V}, max_photons::Integer) where {
     return sources
 end
 
-
-function propagate_sources(sources::AbstractVector{PhotonSource{T,U,V}}) where {T,U,V}
-    total_photons = get_total_photons(sources)
-    max_photons = 2^25
-    #max_photons = 99
-    n_photons_step = min(max_photons, total_photons)
-
-    n_steps = Int64(cld(total_photons, max_photons))
-    photons_step = Matrix{T}(undef, 8, n_photons_step)
-    target_pos = @SVector [0.0f0, 0.0f0, 5.0f0]
-    target = PhotonTarget(target_pos, 1.0f0)
-    prop_steps = UInt16(10)
-
-    split_sources = Vector{PhotonSource{T,U,V}}(undef, 0)
-    for source in sources
-        push!(split_sources, split_source(source, n_photons_step)...)
-    end
-    sort!(split_sources, by=(elem) -> elem.photons, rev=true)
-
-
-    results = []
-
-    this_photons = 0
-    for source in split_sources
-        remainder = n_photons_step - this_photons
-        println("Remainder: $remainder")
-        if source.photons > remainder
-            println("Queuing kernel for $this_photons")
-            result = prepare_and_launch_kernel(photons_step[:, 1:this_photons], target, prop_steps)
-            push!(results, result)
-            this_photons = 0
-        end
-        println("Initiliazing starting $(this_photons+1) for $(source.photons) photons")
-        initialize_photons!(source, view(photons_step, :, this_photons+1:this_photons+source.photons))
-        this_photons += source.photons
-    end
-    println("Queuing kernel for $this_photons")
-
-    result = prepare_and_launch_kernel(photons_step[:, 1:this_photons], target, prop_steps)
-    push!(results, result)
-
-    return hcat(results...)
-
-end
 
 
 function propagate(photons, intersected, photon_target, steps, seed)
@@ -559,13 +511,13 @@ end
 
 function calculate_gpu_memory_usage(stack_length, blocks)
     return sizeof(SVector{3, Float32}) * 2 * stack_length * blocks +
-           sizeof(Float32) * 2 * stack_length * blocks +
+           sizeof(Float32) * 3 * stack_length * blocks +
            sizeof(Int32) * blocks +
            sizeof(Int64)
 end
 
 function calculate_max_stack_size(total_mem, blocks)
-    return convert(Int32, floor((total_mem - sizeof(Int64) -  sizeof(Int32) * blocks) / (sizeof(SVector{3, Float32}) * 2 * blocks +  sizeof(Float32) * 2 * blocks)))
+    return convert(Int32, floor((total_mem - sizeof(Int64) -  sizeof(Int32) * blocks) / (sizeof(SVector{3, Float32}) * 2 * blocks +  sizeof(Float32) * 3 * blocks)))
 end
 
 
@@ -578,7 +530,9 @@ function propagate_distance(distance::Float32, medium::MediumProperties, n_ph_ge
         0.0f0,
         n_ph_gen,
         CherenkovSpectrum((300.0f0, 800.0f0), 20, medium),
-        AngularEmissionProfile{:IsotropicEmission,Float32}(),)
+        AngularEmissionProfile{:IsotropicEmission,Float32}(),
+        EMinus)
+
     target = DetectionSphere(@SVector[0.0f0, 0.0f0, distance], target_radius, n_pmts, pmt_area)
 
     threads = 512
@@ -594,7 +548,7 @@ function propagate_distance(distance::Float32, medium::MediumProperties, n_ph_ge
         test_nph = 1E5
         # Estimate required_stack_length
         stack_len = Int32(cld(1E5, blocks))
-        positions, directions, wavelengths, dist_travelled, stack_idx, n_ph_sim = initialize_photon_arrays(stack_len, blocks, Float32)
+        positions, directions, wavelengths, dist_travelled, times, stack_idx, n_ph_sim = initialize_photon_arrays(stack_len, blocks, Float32)
         err_code = CuVector(zeros(Int32, 1))
 
         test_source = PhotonSource(
@@ -603,10 +557,11 @@ function propagate_distance(distance::Float32, medium::MediumProperties, n_ph_ge
             0.0f0,
             Int64(test_nph),
             CherenkovSpectrum((300.0f0, 800.0f0), 20, medium),
-            AngularEmissionProfile{:IsotropicEmission,Float32}(),)
+            AngularEmissionProfile{:IsotropicEmission,Float32}(),
+            EMinus)
 
         @cuda threads = threads blocks = blocks shmem = sizeof(Int64) cuda_propagate_photons!(
-            positions, directions, wavelengths, dist_travelled, stack_idx, n_ph_sim, err_code, stack_len, Int64(0),
+            positions, directions, wavelengths, dist_travelled, times, stack_idx, n_ph_sim, err_code, stack_len, Int64(0),
             Val(test_source), target.position, target.radius, Val(medium))
         
         n_ph_sim = Vector(n_ph_sim)[1]
@@ -627,10 +582,11 @@ function propagate_distance(distance::Float32, medium::MediumProperties, n_ph_ge
         stack_len = Int32(1E6)
     end
 
-    positions, directions, wavelengths, dist_travelled, stack_idx, n_ph_sim = initialize_photon_arrays(stack_len, blocks, Float32)
+    positions, directions, wavelengths, dist_travelled, times, stack_idx, n_ph_sim = initialize_photon_arrays(stack_len, blocks, Float32)
     err_code = CuVector(zeros(Int32, 1))
+
     @cuda threads = threads blocks = blocks shmem = sizeof(Int64) cuda_propagate_photons!(
-        positions, directions, wavelengths, dist_travelled, stack_idx, n_ph_sim, err_code, stack_len, Int64(0),
+        positions, directions, wavelengths, dist_travelled, times, stack_idx, n_ph_sim, err_code, stack_len, Int64(0),
         Val(source), target.position, target.radius, Val(medium))
 
     if all(stack_idx .== 0)
@@ -641,23 +597,32 @@ function propagate_distance(distance::Float32, medium::MediumProperties, n_ph_ge
     
     n_ph_sim = Vector(n_ph_sim)[1]
 
-    distt = process_output(Vector(dist_travelled), Vector(stack_idx))
-    wls = process_output(Vector(wavelengths), Vector(stack_idx))
+    dist_travelled = process_output(Vector(dist_travelled), Vector(stack_idx))
+    wavelengths = process_output(Vector(wavelengths), Vector(stack_idx))
     directions = process_output(Vector(directions), Vector(stack_idx))
+    times = process_output(Vector(times), Vector(stack_idx))
 
-    abs_weight = convert(Vector{Float64}, exp.(-distt ./ get_absorption_length.(wls, Ref(medium))))
+    abs_weight = convert(Vector{Float64}, exp.(-dist_travelled ./ get_absorption_length.(wavelengths, Ref(medium))))
 
-    ref_ix = get_refractive_index.(wls, Ref(medium))
+    ref_ix = get_refractive_index.(wavelengths, Ref(medium))
     c_vac = ustrip(u"m/ns", SpeedOfLightInVacuum)
-    c_grp = get_group_velocity.(wls, Ref(medium))
+    # c_grp = get_group_velocity.(wavelengths, Ref(medium))
 
 
-    photon_times = distt ./ c_grp
-    tgeo = (distance - target_radius) ./ (c_vac / get_refractive_index(800.0, medium))
-    tres = (photon_times .- tgeo)
+    #photon_times = dist_travelled ./ c_grp
+    
+    tgeo = (distance - target_radius) ./ (c_vac / get_refractive_index(800.0f0, medium)) + source.time
+    tres = (times .- tgeo)
     thetas = map(dir -> acos(dir[3]), directions)
 
-    DataFrame(tres=tres, initial_theta=thetas, ref_ix=ref_ix, abs_weight=abs_weight, dist_travelled=distt, wavelength=wls), n_ph_sim
+    (DataFrame(
+        tres=tres,
+        initial_theta=thetas,
+        ref_ix=ref_ix,
+        abs_weight=abs_weight,
+        dist_travelled=dist_travelled,
+        wavelength=wavelengths),
+    n_ph_sim)
 end
 
 #=

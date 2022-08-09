@@ -4,7 +4,9 @@ using StaticArrays
 using SpecialFunctions
 using Interpolations
 
+
 using ..Spectral
+using ..Types
 
 export AngularEmissionProfile
 export PhotonSource
@@ -99,7 +101,7 @@ end
 cherenkov_ang_dist_int = interp_ch_ang_dist_int()
 
 
-struct PhotonSource{T,U<:Spectrum,V<:AngularEmissionProfile}
+struct PhotonSource{T, U<:Spectrum,V<:AngularEmissionProfile, W<:ParticleType}
     position::SVector{3,T}
     direction::SVector{3,T}
     time::T
@@ -107,6 +109,18 @@ struct PhotonSource{T,U<:Spectrum,V<:AngularEmissionProfile}
     spectrum::U
     emission_profile::V
 end
+
+
+PhotonSource(
+    position::SVector{3,T},
+    direction::SVector{3,T},
+    time::T,
+    photons::Int64,
+    spectrum::U,
+    emission_profile::V,
+    ::Type{W}) where
+    {T, U<:Spectrum,V<:AngularEmissionProfile, W<:ParticleType} = PhotonSource{T, U, V, W}(
+        position, direction, time, photons, spectrum, emission_profile)
 
 
 end

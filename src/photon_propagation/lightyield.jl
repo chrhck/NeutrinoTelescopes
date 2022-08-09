@@ -1,6 +1,7 @@
 module LightYield
 
 export LongitudinalParameters, LongitudinalParametersEMinus, LongitudinalParametersEPlus, LongitudinalParametersGamma
+export get_longitudinal_params
 export MediumPropertiesWater, MediumPropertiesIce
 export CherenkovTrackLengthParameters, CherenkovTrackLengthParametersEMinus, CherenkovTrackLengthParametersEPlus, CherenkovTrackLengthParametersGamma
 export longitudinal_profile, cherenkov_track_length, cherenkov_counts, fractional_contrib_long
@@ -65,18 +66,14 @@ const CherenkovTrackLengthParametersGamma = CherenkovTrackLengthParameters(
     track_length::CherenkovTrackLengthParameters
 end
 
-const longitudinal_params = Dict(
-    :EPlus => LongitudinalParametersEPlus,
-    :EMinus => LongitudinalParametersEMinus,
-    :Gamma => LongitudinalParametersGamma)
 
-const track_len_params = Dict(
-    :EPlus => CherenkovTrackLengthParametersEPlus,
-    :EMinus => CherenkovTrackLengthParametersEMinus,
-    :Gamma => CherenkovTrackLengthParametersGamma)
+get_longitudinal_params(::Type{EPlus}) = LongitudinalParametersEPlus
+get_longitudinal_params(::Type{EMinus}) = LongitudinalParametersEMinus
+get_longitudinal_params(::Type{Gamma}) = LongitudinalParametersGamma
 
-get_longitudinal_params(ptype::Symbol)::LongitudinalParameters = longitudinal_params[ptype]
-get_track_length_params(ptype::Symbol)::CherenkovTrackLengthParameters = track_len_params[ptype]
+get_track_length_params(::Type{EPlus}) = CherenkovTrackLengthParametersEPlus
+get_track_length_params(::Type{EMinus}) = CherenkovTrackLengthParametersEMinus
+get_track_length_params(::Type{Gamma}) = CherenkovTrackLengthParametersGamma
 
 function long_parameter_a_edep(
     energy::Real,
@@ -84,10 +81,10 @@ function long_parameter_a_edep(
 )
     long_pars.alpha + long_pars.beta * log10(energy)
 end
-long_parameter_a_edep(energy::Real, ptype::Symbol) = long_parameter_a_edep(energy, get_longitudinal_params(ptype))
+long_parameter_a_edep(energy::Real, ::Type{ptype}) where {ptype} = long_parameter_a_edep(energy, get_longitudinal_params(ptype))
 
 long_parameter_b_edep(::Real, long_pars::LongitudinalParameters) = long_pars.b
-long_parameter_b_edep(energy::Real, ptype::Symbol) = long_parameter_b_edep(energy, get_longitudinal_params(ptype))
+long_parameter_b_edep(energy::Real, ::Type{ptype}) where {ptype} = long_parameter_b_edep(energy, get_longitudinal_params(ptype))
 
 
 """
@@ -111,7 +108,7 @@ function longitudinal_profile(
 end
 
 function longitudinal_profile(
-    energy, z, medium, ptype::Symbol)
+    energy, z, medium, ::Type{ptype}) where {ptype}
     longitudinal_profile(energy, z, medium, get_longitudinal_params(ptype))
 end
 
@@ -138,7 +135,7 @@ function integral_long_profile(energy::Real, z_low::Real, z_high::Real, medium::
 
 end
 
-function integral_long_profile(energy::Real, z_low::Real, z_high::Real, medium::MediumProperties, ptype::Symbol)
+function integral_long_profile(energy::Real, z_low::Real, z_high::Real, medium::MediumProperties, ::Type{ptype}) where {ptype}
     integral_long_profile(energy, z_low, z_high, medium, get_longitudinal_params(ptype))
 end
 
@@ -169,8 +166,8 @@ function fractional_contrib_long!(
     energy,
     z_grid,
     medium,
-    ptype::Symbol,
-    output)
+    ::Type{ptype},
+    output) where {ptype}
     fractional_contrib_long!(energy, z_grid, medium, get_longitudinal_params(ptype), output)
 end
 
@@ -178,8 +175,8 @@ function fractional_contrib_long(
     energy::Real,
     z_grid::AbstractVector{T},
     medium::MediumProperties,
-    pars_or_ptype::Union{LongitudinalParameters,Symbol}
-) where {T<:Real}
+    pars_or_ptype::Union{LongitudinalParameters, ptype}
+) where {T<:Real, ptype}
     output = similar(z_grid)
     fractional_contrib_long!(energy, z_grid, medium, pars_or_ptype, output)
 end
@@ -191,7 +188,7 @@ end
 function cherenkov_track_length_dev(energy::Real, track_len_params::CherenkovTrackLengthParameters)
     track_len_params.alpha_dev * energy^track_len_params.beta_dev
 end
-cherenkov_track_length_dev(energy::Real, ptype::Symbol) = cherenkov_track_length_dev(energy, get_track_length_params(ptype))
+cherenkov_track_length_dev(energy::Real, ::Type{ptype}) where {ptype} = cherenkov_track_length_dev(energy, get_track_length_params(ptype))
 
 """
     function cherenkov_track_length(energy::Real, track_len_params::CherenkovTrackLengthParameters)
@@ -204,7 +201,7 @@ returns track length in m
 function cherenkov_track_length(energy::Real, track_len_params::CherenkovTrackLengthParameters)
     track_len_params.alpha * energy^track_len_params.beta
 end
-cherenkov_track_length(energy::Real, ptype::Symbol) = cherenkov_track_length(energy, get_track_length_params(ptype))
+cherenkov_track_length(energy::Real, ::Type{ptype}) where {ptype} = cherenkov_track_length(energy, get_track_length_params(ptype))
 
 function particle_to_lightsource(
     particle::Particle{T},

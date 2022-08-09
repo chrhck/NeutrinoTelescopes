@@ -41,7 +41,7 @@ Returned number is in units m^-1.
 """
 function frank_tamm_norm(wl_range::Tuple{T,T}, ref_index_func::Function) where {T<:Real}
     f(x) = frank_tamm(x, ref_index_func(x))
-    integrate_gauss_quad(f, wl_range[1], wl_range[2]) * 1E9
+    integrate_gauss_quad(f, wl_range[1], wl_range[2]) * T(1E9) 
 end
 
 

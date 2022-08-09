@@ -13,7 +13,7 @@ export MediumProperties, WaterProperties
 @unit ppm "ppm" Partspermillion 1 // 1000000 false
 Unitful.register(Medium)
 
-c_vac_m_ns = ustrip(u"m/ns", SpeedOfLightInVacuum)
+const c_vac_m_ns = ustrip(u"m/ns", SpeedOfLightInVacuum)
 
 abstract type MediumProperties{T} end
 
@@ -28,10 +28,11 @@ struct WaterProperties{T} <: MediumProperties{T}
     pressure::T # atm
     temperature::T #°C
     vol_conc_small_part::T # ppm
-    vol_conc_large_part::T
+    vol_conc_large_part::T # ppm
     radiation_length::T # g / cm^2
+    _quan_fry_params::Tuple{T, T, T, T}
 
-    WaterProperties(::T, ::T, ::T, ::T, ::T, ::T) where {T} = error("Use unitful constructor")
+    WaterProperties(::T, ::T, ::T, ::T, ::T, ::T, ::Tuple{T, T, T, T}) where {T} = error("Use unitful constructor")
 
     function WaterProperties(
         salinity::Unitful.Quantity{T},
@@ -41,13 +42,19 @@ struct WaterProperties{T} <: MediumProperties{T}
         vol_conc_large_part::Unitful.Quantity{T},
         radiation_length::Unitful.Quantity{T}
     ) where {T}
+        salinity = ustrip(T, u"permille", salinity)
+        temperature = ustrip(T, u"°C", temperature)
+        pressure = ustrip(T, u"atm", pressure)
+        quan_fry_params = _get_quan_fry_params(salinity, temperature, pressure)
+
         new{T}(
-            ustrip(T, u"permille", salinity),
-            ustrip(T, u"atm", pressure),
-            ustrip(T, u"°C", temperature),
+            salinity,
+            pressure,
+            temperature,
             ustrip(T, u"ppm", vol_conc_small_part),
             ustrip(T, u"ppm", vol_conc_large_part),
-            ustrip(T, u"g/cm^2", radiation_length)
+            ustrip(T, u"g/cm^2", radiation_length),
+            quan_fry_params
         )
     end
 end
@@ -165,30 +172,40 @@ get_refractive_index_fry(wavelength, salinity, temperature, pressure)
     Adapted from clsim (©Claudio Kopper)
 """
 function get_refractive_index_fry(
+    wavelength::T,
+    quan_fry_params::Tuple{T, T, T, T}
+) where {T}
+    a01, a2, a3, a4 = quan_fry_params
+    x = 1 / wavelength
+    x2 = x * x
+    # a01 + x*a2 + x^2 * a3 + x^3 * a4
+    return T(fma(x, a2, a01) + fma(x2, a3, x2*x*a4))
+end
+
+function get_refractive_index_fry(
     wavelength::T;
     salinity::Real,
     temperature::Real,
     pressure::Real) where {T<:Real}
-
-    a01, a2, a3, a4 = _get_quan_fry_params(salinity, temperature, pressure)
-
-    x = 1 / wavelength
-    #return T(a01 + x * (a2 + x * (a3 + x * a4)))
-
-    return T(a01 + x*a2 + x^2 * a3 + x^3 * a4)
-
+    get_refractive_index_fry(wavelength, T.(_get_quan_fry_params(salinity, temperature, pressure)))
 end
 
+function get_dispersion_fry(
+    wavelength::T,
+    quan_fry_params::Tuple{T, T, T, T}
+) where {T<:Real}
+    a01, a2, a3, a4 = quan_fry_params
+    x = 1 / wavelength
+
+    return T(a2 + 2*x*a3 + 3*x^2*a4) * (-1)/wavelength^2
+end
 
 function get_dispersion_fry(
     wavelength::T;
     salinity::Real,
     temperature::Real,
     pressure::Real) where {T <: Real}
-
-    a01, a2, a3, a4 = _get_quan_fry_params(salinity, temperature, pressure)
-    x = 1 / wavelength
-    return T(a2 + 2*x*a3 + 3*x^2*a4) * (-1)/wavelength^2
+    get_dispersion_fry(wavelength, T.(_get_quan_fry_params(salinity, temperature, pressure)))
 end
 
 function get_refractive_index_fry(
@@ -212,9 +229,8 @@ end
 """
 get_refractive_index(wavelength::Real, medium::WaterProperties) = get_refractive_index_fry(
     wavelength,
-    salinity=salinity(medium),
-    temperature=temperature(medium),
-    pressure=pressure(medium))
+    medium._quan_fry_params
+)
 
 get_refractive_index(wavelength::Unitful.Length, medium::MediumProperties) = get_refractive_index(
     ustrip(u"nm", wavelength),
@@ -223,13 +239,14 @@ get_refractive_index(wavelength::Unitful.Length, medium::MediumProperties) = get
 
 get_dispersion(wavelength::Real, medium::WaterProperties) = get_dispersion_fry(
     wavelength,
-    salinity=salinity(medium),
-    temperature=temperature(medium),
-    pressure=pressure(medium)
+    medium._quan_fry_params
 )
+
+get_cherenkov_angle(wavelength, medium::MediumProperties) = acos(1/get_refractive_index(wavelength, medium))
 
 
 function get_group_velocity(wavelength::Real, medium::MediumProperties)
+    global c_vac_m_ns
     ref_ix = get_refractive_index(wavelength, medium)
     λ_0 = ref_ix * wavelength
     c_vac_m_ns / (ref_ix - λ_0 * get_dispersion(wavelength, medium))

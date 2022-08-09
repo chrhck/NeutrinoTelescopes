@@ -10,6 +10,7 @@ export integrate_gauss_quad
 export sph_to_cart, rodrigues_rotation
 export CategoricalSetDistribution
 export sample_cherenkov_track_direction
+export rand_gamma
 
 const GL10 = gausslegendre(10)
 
@@ -73,6 +74,7 @@ end
 
 function transform_integral_range(x::Real, f::T, xrange::Tuple{<:Real,<:Real}) where {T<:Function}
     ba_half = (xrange[2] - xrange[1]) / 2
+    x = oftype(ba_half, x)
 
     u_traf = ba_half * x + (xrange[1] + xrange[2]) / 2
     oftype(x, f(u_traf) * ba_half)
@@ -80,7 +82,8 @@ function transform_integral_range(x::Real, f::T, xrange::Tuple{<:Real,<:Real}) w
 end
 
 function integrate_gauss_quad(f::T, a::Real, b::Real) where {T<:Function}
-    integrate_gauss_quad(f, a, b, GL10[1], GL10[2])
+    U = promote_type(typeof(a), typeof(b))
+    U(integrate_gauss_quad(f, a, b, GL10[1], GL10[2]))
 end
 
 function integrate_gauss_quad(f::T, a::Real, b::Real, order::Integer) where {T<:Function}
@@ -172,6 +175,7 @@ end
 Sample gamma variates when shape < 1
 """
 function rand_gamma(shape, scale)
+
     d = shape - 1/3 + 1.0
     c = 1.0 / sqrt(9.0 * d)
     κ = d * scale
@@ -196,6 +200,10 @@ function rand_gamma(shape, scale)
     nia = -1.0 / shape
     randexp = -log(rand())
     rng_val * exp(randexp * nia)
+
+    T = promote_type(shape, scale)
+    
+    return T(rng_val)
 
 end
 

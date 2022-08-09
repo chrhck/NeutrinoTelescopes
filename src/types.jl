@@ -2,18 +2,24 @@ module Types
 
 using StaticArrays
 
-export ParticleTypes, PDGCodes
+export ParticleType, EPlus, EMinus, Gamma
 export Particle
 
-const ParticleTypes = Set([:EMinus, :EPlus, :Gamma])
-const PDGCodes = Dict(:EMinus => 11, :Eplus => -11, :Gamma => 22)
+abstract type ParticleType end
 
+struct EPlus <:ParticleType end
+struct EMinus <:ParticleType end
+struct Gamma <:ParticleType end
 
-mutable struct Particle{T}
+pdg_code(::Type{EPlus}) = -11
+pdg_code(::Type{EMinus}) = 11
+pdg_code(::Type{Gamma}) = 22
+
+mutable struct Particle{T, PType <: ParticleType}
     position::SVector{3,T}
     direction::SVector{3,T}
     time::T
     energy::T
-    type::Symbol
+    type::PType
 end
 end
