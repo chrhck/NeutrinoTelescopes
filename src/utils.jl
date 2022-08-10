@@ -172,40 +172,37 @@ end
 """
     rand_gamma(shape, scale)
 
-Sample gamma variates when shape < 1
+Sample gamma variates when shape > 1
 """
-function rand_gamma(shape, scale)
+function rand_gamma(shape::Real, scale::Real, T::Type{U}=Float64) where {U <: Real}
 
-    d = shape - 1/3 + 1.0
-    c = 1.0 / sqrt(9.0 * d)
-    κ = d * scale
+    d = T(shape - 1/3)
+    c = one(T) / sqrt(9*d)
+   
 
-    rng_val = 0.
     while true
-        x = randn()
-        v = 1.0 + c * x
-        while v <= 0.0
-            x = randn()
-            v = 1.0 + c * x
+        x = randn(T)
+        v = fma(c, x, one(T))
+
+        if v <= 0
+            continue
         end
-        v *= (v * v)
-        u = rand()
-        x2 = x * x
-        if u < 1.0 - 0.331 * abs2(x2) || log(u) < 0.5 * x2 + d * (1.0 - v + log(v))
-            rng_val = v*κ
-            break
+
+        v = v * v * v
+        u = rand(T)
+
+        xsq = x*x
+
+        if u < one(T) - fma(T(0.0331), xsq*xsq, one(xsq)) # 1 - 0.0331 * xsq^2
+            return d*v*scale
+        end
+
+        if log(u) < T(0.5) * xsq + d*(one(T) - v + log(v))
+            return d*v*scale
         end
     end
-
-    nia = -1.0 / shape
-    randexp = -log(rand())
-    rng_val * exp(randexp * nia)
-
-    T = promote_type(shape, scale)
-    
-    return T(rng_val)
-
 end
+
 
 
 end

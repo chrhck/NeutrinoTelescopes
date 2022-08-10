@@ -108,6 +108,7 @@ struct PhotonSource{T, U<:Spectrum,V<:AngularEmissionProfile, W<:ParticleType}
     photons::Int64
     spectrum::U
     emission_profile::V
+    energy::T
 end
 
 
@@ -118,9 +119,10 @@ PhotonSource(
     photons::Int64,
     spectrum::U,
     emission_profile::V,
+    energy::T,
     ::Type{W}) where
     {T, U<:Spectrum,V<:AngularEmissionProfile, W<:ParticleType} = PhotonSource{T, U, V, W}(
-        position, direction, time, photons, spectrum, emission_profile)
+        position, direction, time, photons, spectrum, emission_profile, energy)
 
 
 end

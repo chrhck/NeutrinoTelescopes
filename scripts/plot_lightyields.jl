@@ -88,7 +88,3 @@ histogram(([(rv[3]) for rv in rot_vecs]), normalize=true)
 angls = -1:0.01:1
 
 plot!(angls, cherenkov_ang_dist.(angls, 1.35) / cherenkov_ang_dist_int(1.35))
-
-
-
-const double cos_val=std::max(1.-std::pow(-std::log(1.-mwcRngRandomNumber_co(rngState, rngA)*angularDist_I_)/angularDist_b_, one_over_angularDist_a_), -1.);

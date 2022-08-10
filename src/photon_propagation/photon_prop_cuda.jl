@@ -105,12 +105,13 @@ end
 
     long_params = get_longitudinal_params(W)
 
-    scale = T(long_parameter_b_edep(energy, long_params))
-    shape = T(1/long_parameter_a_edep(energy, long_params))
+    scale = T(1 / LightYield.long_parameter_b_edep(source.energy, long_params))
+    shape = T(LightYield.long_parameter_a_edep(source.energy, long_params))
 
-    long_pos = rand_gamma(shape, scale)
+    lrad = T(radiation_length(medium) / density(medium) * 10) # m
+    long_pos = rand_gamma(shape, scale, Float32) * lrad
 
-    pos::SVector{3, T} = source.pos + long_pos * source.dir
+    pos::SVector{3, T} = source.position + long_pos * source.direction
     time = source.time + long_pos / T(c_vac_m_ns)
 
     
@@ -127,8 +128,6 @@ end
 
     PhotonState(pos, ph_dir_rot, time, wl)
 end
-
-
 
 
 function initialize_photons!(source::PhotonSource{T,U,V}, photon_container::AbstractMatrix{T}) where {T,U,V}
@@ -156,10 +155,8 @@ end
         rotated = new_dir * cos(theta) + sin(theta) * (axis x new_dir) + (1-cos(theta)) * (axis * new_dir) * axis
     =#
 
-    if CUDA.abs(old_dir[3]) == T(1)
-
-        sign = CUDA.sign(old_dir[3])
-        return @SVector[new_dir[1], sign * new_dir[2], sign * new_dir[3]]
+    if abs(old_dir[3]) == T(1)
+        return @SVector[new_dir[1], copysign(new_dir[2], old_dir[3]), copysign(new_dir[3], old_dir[3])]
     end
 
 
@@ -167,7 +164,7 @@ end
     # sin(theta) = | e_z x old_dir | = sqrt(1 - old_dir[3]^2)
 
     # sinthetasq = 1 - old_dir[3]*old_dir[3]
-    sintheta = CUDA.sqrt(CUDA.fma(-old_dir[3], old_dir[3], 1))
+    sintheta = sqrt(fma(-old_dir[3], old_dir[3], 1))
 
     # Determine axis of rotation (cross product of e_z and old_dir )    
     ax1 = -old_dir[2] / sintheta
@@ -175,21 +172,22 @@ end
 
     # rotated = operand .* cos(theta) + (cross(ax, operand) .* sin(theta)) +  (ax .* (1-cos(theta)) .* dot(ax, operand))
 
-    kappa = (ax1 * new_dir[1] + ax2 * new_dir[2]) * (1 - old_dir[3])
+    # kappa = (ax1 * new_dir[1] + ax2 * new_dir[2]) * (1 - old_dir[3])
+    kappa = fma(ax1, new_dir[1], ax2 * new_dir[2]) * (1 - old_dir[3])
     nd3sintheta = new_dir[3] * sintheta
 
     #new_x = new_dir[1] * old_dir[3] + ax2*nd3sintheta + ax1 * kappa
     #new_y = new_dir[2] * old_dir[3] - ax1*nd3sintheta + ax1 * kappa
     #new_z = new_dir[3] * old_dir[3] + (ax1*new_dir[2] - ax2*new_dir[1]) * sintheta
 
-    new_x = CUDA.fma(new_dir[1], old_dir[3], CUDA.fma(ax2, nd3sintheta, ax1 * kappa))
-    new_y = CUDA.fma(new_dir[2], old_dir[3], CUDA.fma(-ax1, nd3sintheta, ax2 * kappa))
-    new_z = CUDA.fma(new_dir[3], old_dir[3], sintheta * (CUDA.fma(ax1, new_dir[2], -ax2 * new_dir[1])))
+    new_x = fma(new_dir[1], old_dir[3], fma(ax2, nd3sintheta, ax1 * kappa))
+    new_y = fma(new_dir[2], old_dir[3], fma(-ax1, nd3sintheta, ax2 * kappa))
+    new_z = fma(new_dir[3], old_dir[3], sintheta * (fma(ax1, new_dir[2], -ax2 * new_dir[1])))
 
     # Can probably skip renormalizing
-    norm_r = CUDA.rsqrt(new_x^2 + new_y^2 + new_z^2)
+    norm = sqrt(new_x^2 + new_y^2 + new_z^2)
 
-    return @SVector[new_x * norm_r, new_y * norm_r, new_z * norm_r]
+    return @SVector[new_x / norm, new_y / norm, new_z / norm]
 end
 
 
@@ -521,6 +519,24 @@ function calculate_max_stack_size(total_mem, blocks)
 end
 
 
+function propagate_photons(
+    source::PhotonSource,
+    target::PhotonTarget,
+    medium::MediumProperties,
+    threads::Integer,
+    blocks::Integer,
+    stack_len::Integer)
+
+    positions, directions, wavelengths, dist_travelled, times, stack_idx, n_ph_sim = initialize_photon_arrays(stack_len, blocks, Float32)
+    err_code = CuVector(zeros(Int32, 1))
+
+    @cuda threads = threads blocks = blocks shmem = sizeof(Int64) cuda_propagate_photons!(
+        positions, directions, wavelengths, dist_travelled, times, stack_idx, n_ph_sim, err_code, stack_len, Int64(0),
+        Val(source), target.position, target.radius, Val(medium))
+
+    return (positions, directions, wavelengths, dist_travelled, times, stack_idx, n_ph_sim)
+end
+
 function propagate_distance(distance::Float32, medium::MediumProperties, n_ph_gen::Int64, n_pmts=16, pmt_area=Float32((75e-3 / 2)^2*π))
 
     target_radius = 0.21f0
@@ -561,8 +577,6 @@ function propagate_distance(distance::Float32, medium::MediumProperties, n_ph_ge
         test_nph = 1E5
         # Estimate required_stack_length
         stack_len = Int32(cld(1E5, blocks))
-        positions, directions, wavelengths, dist_travelled, times, stack_idx, n_ph_sim = initialize_photon_arrays(stack_len, blocks, Float32)
-        err_code = CuVector(zeros(Int32, 1))
 
         test_source = PhotonSource(
             @SVector[0.0f0, 0.0f0, 0.0f0],
@@ -573,10 +587,14 @@ function propagate_distance(distance::Float32, medium::MediumProperties, n_ph_ge
             AngularEmissionProfile{:IsotropicEmission,Float32}(),
             PEMinus)
 
-        @cuda threads = threads blocks = blocks shmem = sizeof(Int64) cuda_propagate_photons!(
-            positions, directions, wavelengths, dist_travelled, times, stack_idx, n_ph_sim, err_code, stack_len, Int64(0),
-            Val(test_source), target.position, target.radius, Val(medium))
-        
+        positions, directions, wavelengths, dist_travelled, times, stack_idx, n_ph_sim = propagate_photons(
+            test_source,
+            target,
+            medium,
+            threads,
+            blocks,
+            stack_len)
+
         n_ph_sim = Vector(n_ph_sim)[1]
         n_ph_det = sum(stack_idx .% stack_len)
         acc_frac = n_ph_det / n_ph_sim
@@ -595,13 +613,14 @@ function propagate_distance(distance::Float32, medium::MediumProperties, n_ph_ge
         stack_len = Int32(1E6)
     end
 
-    positions, directions, wavelengths, dist_travelled, times, stack_idx, n_ph_sim = initialize_photon_arrays(stack_len, blocks, Float32)
-    err_code = CuVector(zeros(Int32, 1))
+    positions, directions, wavelengths, dist_travelled, times, stack_idx, n_ph_sim = propagate_photons(
+        source,
+        target,
+        medium,
+        threads,
+        blocks,
+        stack_len)
 
-
-    @cuda threads = threads blocks = blocks shmem = sizeof(Int64) cuda_propagate_photons!(
-        positions, directions, wavelengths, dist_travelled, times, stack_idx, n_ph_sim, err_code, stack_len, Int64(0),
-        Val(source), target.position, target.radius, Val(medium))
     
     if all(stack_idx .== 0)
         @warn "No photons survived (distance=$distance, n_ph_gen: $n_ph_gen)"

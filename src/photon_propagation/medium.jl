@@ -7,7 +7,7 @@ using ..Utils
 
 export make_cascadia_medium_properties
 export salinity, pressure, temperature, vol_conc_small_part, vol_conc_large_part, radiation_length, density
-export get_refractive_index, get_scattering_length, get_absorption_length, get_dispersion, get_group_velocity
+export get_refractive_index, get_scattering_length, get_absorption_length, get_dispersion, get_group_velocity, get_cherenkov_angle
 export MediumProperties, WaterProperties
 
 @unit ppm "ppm" Partspermillion 1 // 1000000 false
@@ -30,9 +30,11 @@ struct WaterProperties{T} <: MediumProperties{T}
     vol_conc_small_part::T # ppm
     vol_conc_large_part::T # ppm
     radiation_length::T # g / cm^2
+    density::T
     _quan_fry_params::Tuple{T, T, T, T}
+    
 
-    WaterProperties(::T, ::T, ::T, ::T, ::T, ::T, ::Tuple{T, T, T, T}) where {T} = error("Use unitful constructor")
+    WaterProperties(::T, ::T, ::T, ::T, ::T, ::T, ::T, ::Tuple{T, T, T, T}) where {T} = error("Use unitful constructor")
 
     function WaterProperties(
         salinity::Unitful.Quantity{T},
@@ -46,6 +48,7 @@ struct WaterProperties{T} <: MediumProperties{T}
         temperature = ustrip(T, u"°C", temperature)
         pressure = ustrip(T, u"atm", pressure)
         quan_fry_params = _get_quan_fry_params(salinity, temperature, pressure)
+        density = DIPPR105(temperature + 273.15)
 
         new{T}(
             salinity,
@@ -54,6 +57,7 @@ struct WaterProperties{T} <: MediumProperties{T}
             ustrip(T, u"ppm", vol_conc_small_part),
             ustrip(T, u"ppm", vol_conc_large_part),
             ustrip(T, u"g/cm^2", radiation_length),
+            density,
             quan_fry_params
         )
     end
@@ -77,7 +81,7 @@ make_cascadia_medium_properties(T::Type) = WaterProperties(
 end
 
 # http://ddbonline.ddbst.de/DIPPR105DensityCalculation/DIPPR105CalculationCGI.exe?component=Water
-DDBDIPR105Params = DIPPR105Params(A=0.14395, B=0.0112, C=649.727, D=0.05107)
+const DDBDIPR105Params = DIPPR105Params(A=0.14395, B=0.0112, C=649.727, D=0.05107)
 
 """
     DIPPR105(temperature::Real, params::DIPPR105Params=DDBDIPR105Params)
@@ -99,7 +103,7 @@ temperature(::T) where {T<:MediumProperties} = error("Not implemented for $T")
 temperature(x::WaterProperties) = x.temperature
 
 density(::T) where {T<:MediumProperties} = error("Not implemented for $T")
-density(x::WaterProperties) = DIPPR105(temperature(x) + 273.15)
+density(x::WaterProperties) = x.density
 
 vol_conc_small_part(::T) where {T<:MediumProperties} = error("Not implemented for $T")
 vol_conc_small_part(x::WaterProperties) = x.vol_conc_small_part
