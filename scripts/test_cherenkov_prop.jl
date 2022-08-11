@@ -5,23 +5,37 @@ using NeutrinoTelescopes.Emission
 using NeutrinoTelescopes.Spectral
 using NeutrinoTelescopes.Types
 using NeutrinoTelescopes.Detection
+using NeutrinoTelescopes.Utils
 using StaticArrays
 using Plots
 using Traceur
 
 medium = make_cascadia_medium_properties(Float32)
 
-source = PhotonSource(
+
+theta = deg2rad(90f0)
+phi = deg2rad(-90f0)
+
+dir = sph_to_cart(theta, phi)
+
+particle = Particle(
         @SVector[0.0f0, 0.0f0, 0.0f0],
-        @SVector[0.0f0, 0.0f0, 1.0f0],
-        0.0f0,
-        Int64(1E9),
-        CherenkovSpectrum((300.0f0, 800.0f0), 20, medium),
-        AngularEmissionProfile{:CherenkovEmission,Float32}(),
-        Float32(1E6),
-        PEMinus)
+        dir,
+        0f0,
+        Float32(1E5),
+        PEMinus
+)
+
+source = ExtendedCherenkovEmitter(particle, medium, (300f0, 800f0))
+
+source.photons / 1E9
 
 ppcu.initialize_photon_state(source, medium)
+
+dirs = [ppcu.initialize_photon_state(source, medium).direction for _ in 1:10000]
+
+scatter([dir[1] for dir in dirs], [dir[2] for dir in dirs], [dir[3] for dir in dirs], markersize=1, alpha=0.2)
+
 
 distance = 20f0
 n_pmts=16
@@ -33,4 +47,8 @@ target = DetectionSphere(@SVector[0.0f0, 0.0f0, distance], target_radius, n_pmts
 results = ppcu.propagate_photons(source, target, medium, 512, 92, Int32(100000))
 
 
-histogram(ppcu.process_output(Vector(results[5]), Vector(results[6])), bins=0:1:100)
+
+
+
+
+histogram(ppcu.process_output(Vector(results[5]), Vector(results[6])), bins=0:1:200)

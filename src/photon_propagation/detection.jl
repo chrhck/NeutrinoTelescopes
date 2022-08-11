@@ -49,9 +49,9 @@ p_one_pmt_acc = PMTWavelengthAcceptance(df[:, :wavelength], df[:, :acceptance])
 
 
 
-function make_detector_cube(nx, ny, nz, spacing_vert, spacing_hor)
+function make_detector_cube(nx, ny, nz, spacing_vert::T, spacing_hor::T) where {T <: Real}
 
-    positions = Vector{SVector{3,Float64}}(undef, nx * ny * nz)
+    positions = Vector{SVector{3,T}}(undef, nx * ny * nz)
 
     lin_ix = LinearIndices((1:nx, 1:ny, 1:nz))
     for (i, j, k) in product(1:nx, 1:ny, 1:nz)
@@ -64,7 +64,7 @@ function make_detector_cube(nx, ny, nz, spacing_vert, spacing_hor)
 end
 
 function make_targets(positions, n_pmts, pmt_area)
-    map(pos -> DetectionSphere(pos, 0.21, n_pmts, pmt_area), positions)
+    map(pos -> DetectionSphere(pos, oftype(pmt_area, 0.21), n_pmts, pmt_area), positions)
 end
 
 

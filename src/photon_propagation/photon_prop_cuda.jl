@@ -93,53 +93,46 @@ end
     fast_linear_interp(rand(T), spectrum.knots, T(0), T(1))
 end
 
-@inline function initialize_photon_state(source::PhotonSource{T, U, V, W}, medium) where {T, U, V <: AngularEmissionProfile{:IsotropicEmission,T}, W}
+@inline function initialize_photon_state(source::PointlikeIsotropicEmitter{T}, ::MediumProperties) where {T <: Real}
     wl = initialize_wavelength(source.spectrum)
     pos = source.position
     dir = initialize_direction_isotropic(T)
     PhotonState(pos, dir, T(0), wl)
 end
 
-@inline function initialize_photon_state(source::PhotonSource{T, U, V, W}, medium::MediumProperties) where {T, U, V <: AngularEmissionProfile{:CherenkovEmission,T}, W}
+@inline function initialize_photon_state(source::ExtendedCherenkovEmitter{T, N}, medium::MediumProperties) where {T <:Real, N}
     wl = initialize_wavelength(source.spectrum)
 
-    long_params = get_longitudinal_params(W)
+    long_param = source.long_param
 
-    scale = T(1 / LightYield.long_parameter_b_edep(source.energy, long_params))
-    shape = T(LightYield.long_parameter_a_edep(source.energy, long_params))
+    scale = T(1 / long_param.b)
+    shape = T(long_param.a)
 
-    lrad = T(radiation_length(medium) / density(medium) * 10) # m
+    lrad = long_param.lrad
     long_pos = rand_gamma(shape, scale, Float32) * lrad
 
-    pos::SVector{3, T} = source.position + long_pos * source.direction
+    pos::SVector{3, T} = source.position .+ long_pos .* source.direction
     time = source.time + long_pos / T(c_vac_m_ns)
 
     
-    # Sample a direction of a "Cherenkov track". Dir is relative to e_z
+    # Sample a direction of a "Cherenkov track". Coordinate system aligned with e_z
     track_dir::SVector{3, T} = sample_cherenkov_track_direction(T)
-    dir_rot = rotate_to_axis(source.direction, track_dir)
- 
-    # Sample a photon direction (relative to e_z)
+    
+    # Rotate track coordinate system such, that e_z aligns with source direction
+    track_dir = rotate_to_axis(source.direction, track_dir)
+
+    # Sample a photon direction. Coordinate system aligned with e_z
     theta_cherenkov = get_cherenkov_angle(wl, medium)
     phi = uniform(T(0), T(2 * pi))
-
+    
     ph_dir = sph_to_cart(theta_cherenkov, phi)
-    ph_dir_rot = rotate_to_axis(dir_rot, ph_dir)
 
-    PhotonState(pos, ph_dir_rot, time, wl)
+    # Rotate track coordinate system such, that e_z aligns with track direction
+    ph_dir = rotate_to_axis(track_dir, ph_dir)
+
+    PhotonState(pos, ph_dir, time, wl)
 end
 
-
-function initialize_photons!(source::PhotonSource{T,U,V}, photon_container::AbstractMatrix{T}) where {T,U,V}
-    for i in 1:source.photons
-        photon_container[1:3, i] = source.position
-        photon_container[4:6, i] = initialize_direction(source.emission_profile)
-        photon_container[7, i] = T(0)
-        photon_container[8, i] = initialize_wavelength(source.spectrum)
-    end
-
-    return nothing
-end
 
 @inline function rotate_to_axis(old_dir::SVector{3,T}, new_dir::SVector{3,T}) where {T}
     #=
@@ -158,7 +151,6 @@ end
     if abs(old_dir[3]) == T(1)
         return @SVector[new_dir[1], copysign(new_dir[2], old_dir[3]), copysign(new_dir[3], old_dir[3])]
     end
-
 
     # Determine angle of rotation (cross product e_z and old_dir)
     # sin(theta) = | e_z x old_dir | = sqrt(1 - old_dir[3]^2)
@@ -189,7 +181,6 @@ end
 
     return @SVector[new_x / norm, new_y / norm, new_z / norm]
 end
-
 
 
 @inline function update_direction(this_dir::SVector{3,T}) where {T}
@@ -271,7 +262,6 @@ function cuda_propagate_photons!(
 
     safe_margin = max(0, (blockdim - warpsize))
     n_photons_simulated = Int64(0)
-
 
 
     @inbounds for i in 1:this_n_photons
@@ -412,100 +402,6 @@ function calc_shmem(block_size)
     block_size * 7 * sizeof(Float32) #+ 3 * sizeof(Float32)
 end
 
-get_total_photons(sources::AbstractVector{PhotonSource{T,U,V}}) where {T,U,V} = sum(getproperty.(sources, :photons))
-
-
-
-function launch_kernel(pos, dir, dist_travelled, sca_coeffs, intersected, target, steps, seed)
-    kernel = @cuda launch = false cuda_step_photons!(
-        pos,
-        dir,
-        dist_travelled,
-        sca_coeffs,
-        intersected,
-        Val(target),
-        Val(steps),
-        seed)
-    N = size(pos, 2)
-    config = launch_configuration(kernel.fun, shmem=calc_shmem)
-    threads = min(N, config.threads)
-    blocks = cld(N, threads)
-    shmem = calc_shmem(threads)
-    kernel(
-        pos, dir, dist_travelled, sca_coeffs, intersected, Val(target), Val(steps), seed, threads=threads, blocks=blocks, shmem=shmem)
-
-end
-
-
-function split_source(source::PhotonSource{T,U,V}, max_photons::Integer) where {T,U,V}
-    if source.photons < max_photons
-        return [source]
-    end
-
-    n_sources_split = Int64(ceil(source.photons / max_photons))
-    sources = Vector{PhotonSource{T,U,V}}(undef, n_sources_split)
-    for i in 1:n_sources_split
-        nph = min(max_photons, source.photons - (i - 1) * max_photons)
-        sources[i] = PhotonSource(source.position, source.time, nph, source.spectrum, source.emission_profile)
-    end
-    return sources
-end
-
-
-
-function propagate(photons, intersected, photon_target, steps, seed)
-    kernel = @cuda launch = false cuda_step_photons!(photons, intersected, Val(photon_target), Val(steps), seed)
-    config = launch_configuration(kernel.fun, shmem=calc_shmem)
-    threads = min(N, config.threads)
-    blocks = cld(N, threads)
-
-    all_positions = Array{Float32}(undef, 3, N, steps + 1)
-    all_positions[:, :, 1] = Array(photons[1:3, :])
-
-    for i in 1:steps
-        kernel(photons, intersected, Val(photon_target), Val(1), seed + i * N, threads=threads, blocks=blocks, shmem=calc_shmem(threads))
-        all_positions[:, :, i+1] = Array(photons[1:3, :])
-    end
-    all_positions
-end
-
-function make_bench_cuda_step_photons!(N)
-    sca_len = 10.0f0
-    target_pos = @SVector [0.0f0, 0.0f0, 5.0f0]
-    target = PhotonTarget(target_pos, 1.0f0)
-
-    photons = initialize_photons(N, Float32, (T) -> [0.0f0, 0.0f0, 0.0f0], initialize_direction_isotropic, (T) -> 1 / 20.0f0)
-    intersected = CuArray(zeros(Bool, N))
-
-    steps = UInt16(10)
-    seed = UInt32(1)
-
-    pos = CuArray(photons[1:3, :])
-    dir = CuArray(photons[4:6, :])
-    dist_travelled = CuArray(photons[7, :])
-    sca_coeffs = CuArray(photons[8, :])
-
-    kernel = @cuda launch = false cuda_step_photons!(
-        pos,
-        dir,
-        dist_travelled,
-        sca_coeffs,
-        intersected,
-        Val(target),
-        Val(steps),
-        seed)
-    config = launch_configuration(kernel.fun, shmem=calc_shmem)
-    threads = min(N, config.threads)
-    blocks = cld(N, threads)
-    println("N: $N, threads: $threads, blocks: $blocks")
-    shmem = calc_shmem(threads)
-    bench = @benchmarkable CUDA.@sync $kernel(
-        $pos, $dir, $dist_travelled, $sca_coeffs, $intersected, $(Val(target)), $(Val(steps)), $seed, threads=$threads, blocks=$blocks, shmem=$shmem)
-    CUDA.reclaim()
-    bench
-end
-
-
 
 function calculate_gpu_memory_usage(stack_length, blocks)
     return sizeof(SVector{3, Float32}) * 2 * stack_length * blocks +
@@ -540,15 +436,12 @@ end
 function propagate_distance(distance::Float32, medium::MediumProperties, n_ph_gen::Int64, n_pmts=16, pmt_area=Float32((75e-3 / 2)^2*π))
 
     target_radius = 0.21f0
-    source = PhotonSource(
+    source = PointlikeIsotropicEmitter(
         @SVector[0.0f0, 0.0f0, 0.0f0],
-        @SVector[0.0f0, 0.0f0, 1.0f0],
         0.0f0,
         n_ph_gen,
         CherenkovSpectrum((300.0f0, 800.0f0), 20, medium),
-        AngularEmissionProfile{:IsotropicEmission,Float32}(),
-        PEMinus)
-
+    )
     target = DetectionSphere(@SVector[0.0f0, 0.0f0, distance], target_radius, n_pmts, pmt_area)
 
     threads = 512
@@ -580,13 +473,10 @@ function propagate_distance(distance::Float32, medium::MediumProperties, n_ph_ge
 
         test_source = PhotonSource(
             @SVector[0.0f0, 0.0f0, 0.0f0],
-            @SVector[0.0f0, 0.0f0, 1.0f0],
             0.0f0,
             Int64(test_nph),
             CherenkovSpectrum((300.0f0, 800.0f0), 20, medium),
-            AngularEmissionProfile{:IsotropicEmission,Float32}(),
-            PEMinus)
-
+        )
         positions, directions, wavelengths, dist_travelled, times, stack_idx, n_ph_sim = propagate_photons(
             test_source,
             target,
@@ -644,8 +534,8 @@ function propagate_distance(distance::Float32, medium::MediumProperties, n_ph_ge
 
     #photon_times = dist_travelled ./ c_grp
     
-    tgeo = (distance - target_radius) ./ (c_vac / get_refractive_index(800.0f0, medium)) + source.time
-    tres = (times .- tgeo)
+    tgeo = (distance - target_radius) ./ (c_vac / get_refractive_index(800.0f0, medium))
+    tres = (times .- tgeo .- source.time)
     thetas = map(dir -> acos(dir[3]), directions)
 
     (DataFrame(

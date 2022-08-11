@@ -1,11 +1,13 @@
 module LightYield
 
 export LongitudinalParameters, LongitudinalParametersEMinus, LongitudinalParametersEPlus, LongitudinalParametersGamma
+export LongitudinalParameterisation
 export get_longitudinal_params
 export MediumPropertiesWater, MediumPropertiesIce
 export CherenkovTrackLengthParameters, CherenkovTrackLengthParametersEMinus, CherenkovTrackLengthParametersEPlus, CherenkovTrackLengthParametersGamma
 export longitudinal_profile, cherenkov_track_length, cherenkov_counts, fractional_contrib_long
 export particle_to_lightsource, particle_to_elongated_lightsource, particle_to_elongated_lightsource!, CherenkovSegment
+export total_lightyield
 
 using Parameters: @with_kw
 using SpecialFunctions: gamma
@@ -15,7 +17,6 @@ using Sobol
 using Zygote
 using PhysicalConstants.CODATA2018
 using Unitful
-using ..Emission
 using ..Spectral
 using ..Medium
 using ..Utils
@@ -32,6 +33,27 @@ end
 const LongitudinalParametersEMinus = LongitudinalParameters(alpha=2.01849, beta=1.45469, b=0.63207)
 const LongitudinalParametersEPlus = LongitudinalParameters(alpha=2.00035, beta=1.45501, b=0.63008)
 const LongitudinalParametersGamma = LongitudinalParameters(alpha=2.83923, beta=1.34031, b=0.64526)
+
+@with_kw struct LongitudinalParameterisation{T <: Real}
+    a::T
+    b::T
+    lrad::T
+end
+
+function LongitudinalParameterisation(energy::T, medium::MediumProperties, long_pars::LongitudinalParameters) where {T <:Real}
+    b = T(long_parameter_b_edep(energy, long_pars))
+    a = T(long_parameter_a_edep(energy, long_pars))
+
+    unit_conv = 10 # g/cm^2 / "kg/m^3" in m    
+    lrad = radiation_length(medium) / density(medium) * unit_conv
+
+    LongitudinalParameterisation(a, b, lrad)
+end
+
+LongitudinalParameterisation(energy::T, medium::MediumProperties, ::Type{ptype}) where {T <:Real, ptype <: ParticleType} = LongitudinalParameterisation(
+    energy, medium, get_longitudinal_params(ptype))
+
+
 
 @with_kw struct CherenkovTrackLengthParameters
     alpha::Float64 # cm
@@ -81,34 +103,43 @@ function long_parameter_a_edep(
 )
     long_pars.alpha + long_pars.beta * log10(energy)
 end
-long_parameter_a_edep(energy::Real, ::Type{ptype}) where {ptype} = long_parameter_a_edep(energy, get_longitudinal_params(ptype))
+long_parameter_a_edep(energy::Real, ::Type{ptype}) where {ptype <: ParticleType} = long_parameter_a_edep(energy, get_longitudinal_params(ptype))
 
 long_parameter_b_edep(::Real, long_pars::LongitudinalParameters) = long_pars.b
-long_parameter_b_edep(energy::Real, ::Type{ptype}) where {ptype} = long_parameter_b_edep(energy, get_longitudinal_params(ptype))
+long_parameter_b_edep(energy::Real, ::Type{ptype}) where {ptype <: ParticleType} = long_parameter_b_edep(energy, get_longitudinal_params(ptype))
 
+
+"""
+    longitudinal_profile(z::Real, medium::MediumProperties, long_pars::LongitudinalParameters)
+    
+Longitudinal shower profile (PDF) at shower depth z ( in m )
+"""
+function longitudinal_profile(z::Real, long_param::LongitudinalParameterisation)
+
+    a = long_param.a
+    b = long_param.b
+    lrad = long_param.lrad
+
+    t = z / lrad
+
+    b * ((t * b)^(a - 1.0) * exp(-(t * b)) / gamma(a))
+end
 
 """
     longitudinal_profile(energy::Real, z::Real, medium::MediumProperties, long_pars::LongitudinalParameters)
     
 energy in GeV, z in m,
 """
+
 function longitudinal_profile(
     energy::Real, z::Real, medium::MediumProperties, long_pars::LongitudinalParameters)
+    long_param = LongitudinalParameterisation(energy, medium, long_pars)
+    longitudinal_profile(z, long_param)
 
-    unit_conv = 10 # g/cm^2 / "kg/m^3" in m    
-    lrad = radiation_length(medium) / density(medium) * unit_conv # m
-
-    t = z / lrad
-    b = long_parameter_b_edep(energy, long_pars)
-    a = long_parameter_a_edep(energy, long_pars)
-
-
-    b * ((t * b)^(a - 1.0) * exp(-(t * b)) / gamma(a))
-    
 end
 
 function longitudinal_profile(
-    energy, z, medium, ::Type{ptype}) where {ptype}
+    energy, z, medium, ::Type{ptype}) where {ptype <: ParticleType}
     longitudinal_profile(energy, z, medium, get_longitudinal_params(ptype))
 end
 
@@ -121,22 +152,49 @@ Cumulative Gamma distribution
 gamma_cdf(a, b, z) = 1. - gamma(a, b*z) / gamma(a)
 
 
-function integral_long_profile(energy::Real, z_low::Real, z_high::Real, medium::MediumProperties, long_pars::LongitudinalParameters)
-    unit_conv = 10 # g/cm^2 / "kg/m^3" in m    
-    lrad = radiation_length(medium) / density(medium) * unit_conv # m
+"""
+    integral_long_profile(z_low::Real, z_high::Real, long_param::LongitudinalParameterisation)
+
+Integral of the longitudinal profile from shower depth z_low (in m) to z_high
+"""
+function integral_long_profile(z_low::Real, z_high::Real, long_param::LongitudinalParameterisation)
+    a = long_param.a
+    b = long_param.b
+    lrad = long_param.lrad
 
     t_low = z_low / lrad
     t_high = z_high / lrad
-    b = long_parameter_b_edep(energy, long_pars)
-    a = long_parameter_a_edep(energy, long_pars)
-
-
     gamma_cdf(a, b, t_high) - gamma_cdf(a, b, t_low)
-
 end
 
-function integral_long_profile(energy::Real, z_low::Real, z_high::Real, medium::MediumProperties, ::Type{ptype}) where {ptype}
+function integral_long_profile(energy::Real, z_low::Real, z_high::Real, medium::MediumProperties, long_pars::LongitudinalParameters)
+    long_param = LongitudinalParameterisation(energy, medium, long_pars)
+    integral_long_profile(z_low, z_high, long_param)    
+end
+
+function integral_long_profile(energy::Real, z_low::Real, z_high::Real, medium::MediumProperties, ::Type{ptype}) where {ptype <: ParticleType}
     integral_long_profile(energy, z_low, z_high, medium, get_longitudinal_params(ptype))
+end
+
+
+function fractional_contrib_long!(
+    z_grid::AbstractVector{T},
+    long_param::LongitudinalParameterisation,
+    output::Union{Zygote.Buffer,AbstractVector{T}}
+) where {T<:Real}
+    if length(z_grid) != length(output)
+        error("Grid and output are not of the same length")
+    end
+
+    norm = integral_long_profile(z_grid[1], z_grid[end], long_param)
+
+    output[1] = 0
+    @inbounds for i in 1:size(z_grid, 1)-1
+        output[i+1] = (
+            1 / norm * integral_long_profile(z_grid[i], z_grid[i+1], long_param)
+        )
+    end
+    output
 end
 
 function fractional_contrib_long!(
@@ -147,19 +205,8 @@ function fractional_contrib_long!(
     output::Union{Zygote.Buffer,AbstractVector{T}}
 ) where {T<:Real}
 
-    if length(z_grid) != length(output)
-        error("Grid and output are not of the same length")
-    end
-
-    norm = integral_long_profile(energy, z_grid[1], z_grid[end], medium, long_pars)
-
-    output[1] = 0
-    @inbounds for i in 1:size(z_grid, 1)-1
-        output[i+1] = (
-            1 / norm * integral_long_profile(energy, z_grid[i], z_grid[i+1], medium, long_pars)
-        )
-    end
-    output
+    long_param = LongitudinalParameterisation(energy, medium, long_pars)
+    fractional_contrib_long!(z_grid, long_param, output)
 end
 
 function fractional_contrib_long!(
@@ -167,7 +214,7 @@ function fractional_contrib_long!(
     z_grid,
     medium,
     ::Type{ptype},
-    output) where {ptype}
+    output) where {ptype <: ParticleType}
     fractional_contrib_long!(energy, z_grid, medium, get_longitudinal_params(ptype), output)
 end
 
@@ -183,12 +230,10 @@ end
 
 
 
-
-
 function cherenkov_track_length_dev(energy::Real, track_len_params::CherenkovTrackLengthParameters)
     track_len_params.alpha_dev * energy^track_len_params.beta_dev
 end
-cherenkov_track_length_dev(energy::Real, ::Type{ptype}) where {ptype} = cherenkov_track_length_dev(energy, get_track_length_params(ptype))
+cherenkov_track_length_dev(energy::Real, ::Type{ptype}) where {ptype <: ParticleType} = cherenkov_track_length_dev(energy, get_track_length_params(ptype))
 
 """
     function cherenkov_track_length(energy::Real, track_len_params::CherenkovTrackLengthParameters)
@@ -201,7 +246,22 @@ returns track length in m
 function cherenkov_track_length(energy::Real, track_len_params::CherenkovTrackLengthParameters)
     track_len_params.alpha * energy^track_len_params.beta
 end
-cherenkov_track_length(energy::Real, ::Type{ptype}) where {ptype} = cherenkov_track_length(energy, get_track_length_params(ptype))
+cherenkov_track_length(energy::Real, ::Type{ptype}) where {ptype <: ParticleType} = cherenkov_track_length(energy, get_track_length_params(ptype))
+
+
+function total_lightyield(
+    particle::Particle{T},
+    medium::MediumProperties,
+    wl_range::Tuple{T,T}
+) where {T <:Real}
+    total_contrib = (
+        frank_tamm_norm(wl_range, wl -> get_refractive_index(wl, medium)) *
+        cherenkov_track_length.(particle.energy, particle.type)
+    )
+    total_contrib
+end
+
+
 
 function particle_to_lightsource(
     particle::Particle{T},
@@ -209,10 +269,7 @@ function particle_to_lightsource(
     wl_range::Tuple{T,T}
 ) where {T<:Real}
 
-    total_contrib = (
-        frank_tamm_norm(wl_range, wl -> medium.ref_ix) *
-        cherenkov_track_length.(particle.energy, particle.type)
-    )
+    total_contrib = total_lightyield(particle, medium, wl_range)
 
     CherenkovSegment(
         particle.position,
@@ -265,13 +322,13 @@ function particle_to_elongated_lightsource!(
     )
 
 
-    step_along = [0.5 * (int_grid[i] + int_grid[i+1]) for i in 1:(n_steps-1)]
+    step_along = [T(0.5) * (int_grid[i] + int_grid[i+1]) for i in 1:(n_steps-1)]
 
     for i in 2:n_steps
         this_pos = particle.position .+ step_along[i-1] .* particle.direction
-        this_time = particle.time + step_along[i-1] / c_vac_m_p_ns
+        this_time = particle.time + step_along[i-1] / T(c_vac_m_p_ns)
 
-        this_nph = total_contrib * fractional_contrib[i]
+        this_nph = T(total_contrib * fractional_contrib[i])
 
         this_src = CherenkovSegment(
             this_pos,

@@ -20,6 +20,6 @@ mutable struct Particle{T, PType <: ParticleType}
     direction::SVector{3,T}
     time::T
     energy::T
-    type::PType
+    type::Type{PType}
 end
 end

@@ -18,6 +18,9 @@ using Base.Iterators
 using Zygote
 using ParameterSchedulers
 using ParameterSchedulers: AbstractSchedule
+using Unitful
+using PhysicalConstants.CODATA2018
+
 
 using Logging: with_logger
 using TensorBoardLogger: TBLogger, tb_increment, set_step!, set_step_increment!
@@ -50,6 +53,9 @@ Cherenkov angular emission.
 and emitter and the Cherenkov emitter direction)
 `ref_ixs` are the refractive indices for each photon
 """
+
+global c_vac_m_ns = ustrip(u"m/ns", SpeedOfLightInVacuum)
+
 function get_dir_reweight(thetas::AbstractVector{T}, obs_angle::Real, ref_ixs::AbstractVector{T}) where {T<:Real}
     norm = cherenkov_ang_dist_int.(ref_ixs) .* 2
     cherenkov_ang_dist.(cos.(thetas .- obs_angle), ref_ixs) ./ norm
@@ -361,10 +367,10 @@ function evaluate_model(
 
     sources = LightYield.particle_to_elongated_lightsource(
         particle,
-        (0.0, 20.0),
+        (T(0.0), T(20.0)),
         precision,
         medium,
-        (300.0, 800.0),
+        (T(300.0), T(800.0)),
     )
 
     inputs = source_to_input(sources, targets)
@@ -380,15 +386,27 @@ function evaluate_model(
     
     predictions_rshp[3, :, :] = mapslices(slice -> slice .* area_acceptance.(targets), predictions_rshp[3, :, :], dims=2) 
     
-    mask_rshp = reshape(mask, (size(sources, 1), size(targets, 1)))
+    mask_rshp = reshape(mask, (length(sources), length(targets)))
 
-    return predictions_rshp, sources, mask_rshp
+    #=
+    distances = empty((length(sources), length(targets)))
+
+    for (i, j) in zip(eachindex(sources), eachindex(targets))
+        distances[i, j] = norm(sources[i].position - targets[j].position)
+    end
+    =#
+
+    distances = reshape(exp10.(inputs[1, :]),  (length(sources), length(targets)))
+
+    return predictions_rshp, sources, mask_rshp, distances
 end
 
 function shape_mixture_per_module(
     params::AbstractArray{U,3},
     sources::AbstractVector{V},
-    mask::AbstractMatrix{Bool}
+    mask::AbstractMatrix{Bool},
+    distances::AbstractArray{U,2},
+    medium::MediumProperties
 ) where {U<:Real,V<:LightYield.CherenkovSegment}
 
     n_sources = size(params, 2)
@@ -406,9 +424,13 @@ function shape_mixture_per_module(
 
     probs[.!mask] .= 0
 
+    c_ph = (c_vac_m_ns / get_refractive_index(800.0f0, medium))
+
     @inbounds for i in 1:n_targets
         if any(probs[:, i] .> 0)
-            dists = [Gamma(params[1, j, i], params[2, j, i]) + sources[j].time for j in 1:n_sources]
+
+
+            dists = [Gamma(params[1, j, i], params[2, j, i]) + sources[j].time + distances[j, i]/c_ph for j in 1:n_sources]
             mixtures_buf[i] = MixtureModel(dists, probs[:, i] ./ sum(probs[:, i]))
         end
     end

@@ -3,13 +3,16 @@ module Emission
 using StaticArrays
 using SpecialFunctions
 using Interpolations
+using PoissonRandom
 
 
 using ..Spectral
 using ..Types
+using ..LightYield
+using ..Medium
 
 export AngularEmissionProfile
-export PhotonSource
+export PhotonSource, PointlikeIsotropicEmitter, ExtendedCherenkovEmitter
 export cherenkov_ang_dist, cherenkov_ang_dist_int
 
 struct AngularEmissionProfile{U,T} end
@@ -101,28 +104,31 @@ end
 cherenkov_ang_dist_int = interp_ch_ang_dist_int()
 
 
-struct PhotonSource{T, U<:Spectrum,V<:AngularEmissionProfile, W<:ParticleType}
+
+abstract type PhotonSource{T} end
+
+struct PointlikeIsotropicEmitter{T, U<:Spectrum} <: PhotonSource{T}
+    position::SVector{3,T}
+    time::T
+    photons::Int64
+    spectrum::U
+end
+
+struct ExtendedCherenkovEmitter{T, N} <: PhotonSource{T}
     position::SVector{3,T}
     direction::SVector{3,T}
     time::T
     photons::Int64
-    spectrum::U
-    emission_profile::V
-    energy::T
+    spectrum::CherenkovSpectrum{T, N}
+    long_param::LongitudinalParameterisation{T}
 end
 
+function ExtendedCherenkovEmitter(particle::Particle, medium::MediumProperties, wl_range::Tuple{T, T}) where {T <: Real}
 
-PhotonSource(
-    position::SVector{3,T},
-    direction::SVector{3,T},
-    time::T,
-    photons::Int64,
-    spectrum::U,
-    emission_profile::V,
-    energy::T,
-    ::Type{W}) where
-    {T, U<:Spectrum,V<:AngularEmissionProfile, W<:ParticleType} = PhotonSource{T, U, V, W}(
-        position, direction, time, photons, spectrum, emission_profile, energy)
+    long_param = LongitudinalParameterisation(particle.energy, medium, particle.type)
+    photons = pois_rand(total_lightyield(particle, medium, wl_range))
+    spectrum = CherenkovSpectrum(wl_range, 20, medium)
 
-
+    ExtendedCherenkovEmitter(particle.position, particle.direction, particle.time, photons, spectrum, long_param)
+end
 end
