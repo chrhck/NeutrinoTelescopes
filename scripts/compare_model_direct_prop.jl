@@ -16,6 +16,9 @@ using BSON
 using Flux
 using StaticArrays
 using DSP
+using DataFrames
+
+using LinearAlgebra
 
 using Unitful
 using PhysicalConstants.CODATA2018
@@ -35,13 +38,13 @@ target = DetectionSphere(@SVector[0.0f0, 0.0f0, distance], target_radius, n_pmts
 
 targets = [target]
 
-zenith_angle = 0f0
-azimuth_angle = 0f0
+zenith_angle = 120f0
+azimuth_angle = 30f0
 
 pdir = sph_to_cart(deg2rad(zenith_angle), deg2rad(azimuth_angle))
 
 particle = Particle(
-        @SVector[0.0f0, 0.0f0, 0.0f0],
+        @SVector[0.0f0, 40.0f0, 0.0f0],
         pdir,
         0f0,
         Float32(1E4),
@@ -60,43 +63,95 @@ event = sample_event(poissons, shapes, sources)
 histogram(event)
 
 
+
+
+
+function propagate_source(source)
+    results = ppcu.propagate_photons(source, target, medium, 512, 92, Int32(100000))
+    positions, directions, wavelengths, dist_travelled, times, stack_idx, n_ph_sim = results
+
+    n_ph_sim = Vector(n_ph_sim)[1]
+
+    dist_travelled = ppcu.process_output(Vector(dist_travelled), Vector(stack_idx))
+    wavelengths = ppcu.process_output(Vector(wavelengths), Vector(stack_idx))
+    directions = ppcu.process_output(Vector(directions), Vector(stack_idx))
+    times = ppcu.process_output(Vector(times), Vector(stack_idx))
+
+    abs_weight = convert(Vector{Float64}, exp.(-dist_travelled ./ get_absorption_length.(wavelengths, Ref(medium))))
+
+    ref_ix = get_refractive_index.(wavelengths, Ref(medium))
+    thetas = map(dir -> acos(dir[3]), directions)
+    #c_vac = ustrip(u"m/ns", SpeedOfLightInVacuum)
+    # c_grp = get_group_velocity.(wavelengths, Ref(medium))
+
+
+    #photon_times = dist_travelled ./ c_grp
+
+    #tgeo = (distance - target_radius) ./ (c_vac / get_refractive_index(800.0f0, medium))
+    #tres = (times .- tgeo)
+
+    pmt_acc_weight = p_one_pmt_acc.(wavelengths)
+
+    log_dist, cos_obs_angle = source_to_input(sources[1], target)
+
+    dir_weight = get_dir_reweight(thetas, acos(cos_obs_angle), ref_ix)
+    total_weight = abs_weight .* pmt_acc_weight
+
+    return DataFrame(:times => times, :total_weight => total_weight, :dir_weight => dir_weight, :thetas=>thetas, :directions=>directions, :ref_ix=>ref_ix)
+end
+
 prop_source = ExtendedCherenkovEmitter(particle, medium, (300f0, 800f0))
 prop_source2 = PointlikeIsotropicEmitter(particle.position, particle.time, prop_source.photons, CherenkovSpectrum((300f0, 800f0), 20, medium))
-
-results = ppcu.propagate_photons(prop_source, target, medium, 512, 92, Int32(100000))
-results = ppcu.propagate_photons(prop_source2, target, medium, 512, 92, Int32(100000))
-positions, directions, wavelengths, dist_travelled, times, stack_idx, n_ph_sim = results
-
-n_ph_sim = Vector(n_ph_sim)[1]
-prop_source.photons
+prop_source3 = PointlikeCherenkovEmitter(particle, medium, (300f0, 800f0))
 
 
-dist_travelled = process_output(Vector(dist_travelled), Vector(stack_idx))
-wavelengths = process_output(Vector(wavelengths), Vector(stack_idx))
-directions = process_output(Vector(directions), Vector(stack_idx))
-times = process_output(Vector(times), Vector(stack_idx))
+prop_source2.photons
+prop_source3.photons
+
+results_iso = propagate_source(prop_source2)
+results_che = propagate_source(prop_source3)
 
 
-abs_weight = convert(Vector{Float64}, exp.(-dist_travelled ./ get_absorption_length.(wavelengths, Ref(medium))))
+src_targ = target.position - prop_source.position
+src_targ = src_targ ./ norm(src_targ)
 
-ref_ix = get_refractive_index.(wavelengths, Ref(medium))
-c_vac = ustrip(u"m/ns", SpeedOfLightInVacuum)
-# c_grp = get_group_velocity.(wavelengths, Ref(medium))
+@show cos(results_iso[1, :directions][3] - dot(src_targ, prop_source.direction))
+
+results_iso[1, :directions]
+
+dir_weight_new = get_dir_reweight_new.(results_iso[:, :directions], Ref(src_targ), results_iso[:, :ref_ix])
+
+results_iso[!, :norm_weights] = 
+results_iso[!, :norm_weights] ./= sum(results_iso[!, :norm_weights])
+
+results_che[!, :norm_weights] = results_che[:, :total_weight] / sum(results_che[:, :total_weight])
 
 
-#photon_times = dist_travelled ./ c_grp
+all(isfinite.(dir_weight_new))
 
-tgeo = (distance - target_radius) ./ (c_vac / get_refractive_index(800.0f0, medium))
-tres = (times .- tgeo)
+histogram(cos.(results_che[:, :thetas]), weights=results_che[:, :total_weight],
+ bins = -1:0.1:1,   normalize=true)
+histogram!(cos.(results_iso[:, :thetas]), weights=results_iso[:, :total_weight].*results_iso[:, :dir_weight],
+ bins = -1:0.1:1, legend=:topleft,  normalize=true)
+histogram!(cos.(results_iso[:, :thetas]), weights=results_iso[:, :total_weight].*dir_weight_new,
+ bins = -1:0.1:1, legend=:topleft, normalize=true)
 
-pmt_acc_weight = p_one_pmt_acc.(wavelengths)
 
-log_dist, cos_obs_angle = source_to_input(sources[1], target)
-
-#dir_weight = get_dir_reweight(thetas, acos(cos_obs_angle), ref_ix)
-total_weight = abs_weight .* pmt_acc_weight
+histogram(results_iso[:, :times], weights=results_iso[:, :total_weight].*results_iso[:, :dir_weight],
+bins = 280:1:360)
+histogram!(results_che[:, :times], weights=results_che[:, :total_weight],
+ bins = 280:1:360)
+histogram!(results_iso[:, :times], weights=results_iso[:, :total_weight].*dir_weight_new,
+bins = 280:1:360)
 
 times
+
+
+test = [0, 0, 0, 10, 10, 10]
+weights = [10, 10, 10, 1, 1, 1]
+
+histogram(test, weights=weights, bins=0:11)
+
 
 histogram(event[1] .- tgeo, normalize=true, bins=-50:50)
 histogram!(tres, weight=total_weight,  bins=-50:50, normalize=true)

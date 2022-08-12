@@ -20,7 +20,7 @@ using ParameterSchedulers
 using ParameterSchedulers: AbstractSchedule
 using Unitful
 using PhysicalConstants.CODATA2018
-
+using StaticArrays
 
 using Logging: with_logger
 using TensorBoardLogger: TBLogger, tb_increment, set_step!, set_step_increment!
@@ -56,9 +56,15 @@ and emitter and the Cherenkov emitter direction)
 
 global c_vac_m_ns = ustrip(u"m/ns", SpeedOfLightInVacuum)
 
-function get_dir_reweight(thetas::AbstractVector{T}, obs_angle::Real, ref_ixs::AbstractVector{T}) where {T<:Real}
-    norm = cherenkov_ang_dist_int.(ref_ixs) .* 2
-    cherenkov_ang_dist.(cos.(thetas .- obs_angle), ref_ixs) ./ norm
+
+function get_dir_reweight(em_dir::SVector{3, T}, source_targ_dir::SVector{3, T}, ref_ix::T) where {T<:Real}
+    
+    rot_ph_dir = rodrigues_rotation(source_targ_dir, SA[0., 0., 1.], em_dir)
+
+    ph_cos_theta = rot_ph_dir[3]
+    norm = cherenkov_ang_dist_int(ref_ix) .* 2
+    
+    cherenkov_ang_dist(ph_cos_theta, ref_ix) / norm
 end
 
 
@@ -71,15 +77,19 @@ function fit_photon_dist(obs_angles, obs_photon_df, n_ph_gen)
 
 
 
-    ph_thetas = obs_photon_df[:, :initial_theta]
+    ph_directions = obs_photon_df[:, :initial_directions]
     ph_ref_ix = obs_photon_df[:, :ref_ix]
     ph_abs_weight = obs_photon_df[:, :abs_weight]
     ph_tres = obs_photon_df[:, :tres]
 
+
     pmt_acc_weight = p_one_pmt_acc.(obs_photon_df[:, :wavelength])
 
     for obs_angle in obs_angles
-        dir_weight = get_dir_reweight(ph_thetas, obs_angle, ph_ref_ix)
+        
+        source_targ_dir = sph_to_cart(obs_angle, 0)
+        
+        dir_weight = get_dir_reweight.(ph_directions, Ref(source_targ_dir), ph_ref_ix)
         total_weight = dir_weight .* ph_abs_weight .* pmt_acc_weight
 
         mask = ph_tres .>= 0

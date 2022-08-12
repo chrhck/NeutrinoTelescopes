@@ -100,21 +100,7 @@ end
     PhotonState(pos, dir, T(0), wl)
 end
 
-@inline function initialize_photon_state(source::ExtendedCherenkovEmitter{T, N}, medium::MediumProperties) where {T <:Real, N}
-    wl = initialize_wavelength(source.spectrum)
-
-    long_param = source.long_param
-
-    scale = T(1 / long_param.b)
-    shape = T(long_param.a)
-
-    lrad = long_param.lrad
-    long_pos = rand_gamma(shape, scale, Float32) * lrad
-
-    pos::SVector{3, T} = source.position .+ long_pos .* source.direction
-    time = source.time + long_pos / T(c_vac_m_ns)
-
-    
+@inline function sample_cherenkov_direction(source::CherenkovEmitter{T}, medium::MediumProperties, wl::T) where {T <: Real}
     # Sample a direction of a "Cherenkov track". Coordinate system aligned with e_z
     track_dir::SVector{3, T} = sample_cherenkov_track_direction(T)
     
@@ -129,6 +115,36 @@ end
 
     # Rotate track coordinate system such, that e_z aligns with track direction
     ph_dir = rotate_to_axis(track_dir, ph_dir)
+    return ph_dir
+end
+
+
+@inline function initialize_photon_state(source::ExtendedCherenkovEmitter{T, N}, medium::MediumProperties) where {T <:Real, N}
+    wl = initialize_wavelength(source.spectrum)
+
+    long_param = source.long_param
+
+    scale = T(1 / long_param.b)
+    shape = T(long_param.a)
+
+    lrad = long_param.lrad
+    long_pos = rand_gamma(shape, scale, Float32) * lrad
+
+    pos::SVector{3, T} = source.position .+ long_pos .* source.direction
+    time = source.time + long_pos / T(c_vac_m_ns)
+    
+    ph_dir = sample_cherenkov_direction(source, medium, wl)
+
+    PhotonState(pos, ph_dir, time, wl)
+end
+
+@inline function initialize_photon_state(source::PointlikeCherenkovEmitter{T, N}, medium::MediumProperties) where {T <:Real, N}
+    wl = initialize_wavelength(source.spectrum)
+    
+    pos::SVector{3, T} = source.position 
+    time = source.time 
+    
+    ph_dir = sample_cherenkov_direction(source, medium, wl)
 
     PhotonState(pos, ph_dir, time, wl)
 end
@@ -536,11 +552,10 @@ function propagate_distance(distance::Float32, medium::MediumProperties, n_ph_ge
     
     tgeo = (distance - target_radius) ./ (c_vac / get_refractive_index(800.0f0, medium))
     tres = (times .- tgeo .- source.time)
-    thetas = map(dir -> acos(dir[3]), directions)
 
     (DataFrame(
         tres=tres,
-        initial_theta=thetas,
+        initial_directions=directions,
         ref_ix=ref_ix,
         abs_weight=abs_weight,
         dist_travelled=dist_travelled,

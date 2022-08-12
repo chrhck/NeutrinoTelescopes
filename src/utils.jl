@@ -145,6 +145,9 @@ Apply the resulting rotation to operand.
 """
 function rodrigues_rotation(a, b, operand)
     # Rotate a to b and apply to operand
+    if a == b
+        return operand
+    end
     ax = cross(a, b)
     axnorm = norm(ax)
     ax = ax ./ axnorm

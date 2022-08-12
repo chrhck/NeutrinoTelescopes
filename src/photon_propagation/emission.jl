@@ -12,7 +12,7 @@ using ..LightYield
 using ..Medium
 
 export AngularEmissionProfile
-export PhotonSource, PointlikeIsotropicEmitter, ExtendedCherenkovEmitter
+export PhotonSource, PointlikeIsotropicEmitter, ExtendedCherenkovEmitter, CherenkovEmitter, PointlikeCherenkovEmitter
 export cherenkov_ang_dist, cherenkov_ang_dist_int
 
 struct AngularEmissionProfile{U,T} end
@@ -106,6 +106,7 @@ cherenkov_ang_dist_int = interp_ch_ang_dist_int()
 
 
 abstract type PhotonSource{T} end
+abstract type CherenkovEmitter{T} <: PhotonSource{T} end
 
 struct PointlikeIsotropicEmitter{T, U<:Spectrum} <: PhotonSource{T}
     position::SVector{3,T}
@@ -114,7 +115,8 @@ struct PointlikeIsotropicEmitter{T, U<:Spectrum} <: PhotonSource{T}
     spectrum::U
 end
 
-struct ExtendedCherenkovEmitter{T, N} <: PhotonSource{T}
+
+struct ExtendedCherenkovEmitter{T, N} <: CherenkovEmitter{T}
     position::SVector{3,T}
     direction::SVector{3,T}
     time::T
@@ -131,4 +133,20 @@ function ExtendedCherenkovEmitter(particle::Particle, medium::MediumProperties, 
 
     ExtendedCherenkovEmitter(particle.position, particle.direction, particle.time, photons, spectrum, long_param)
 end
+
+struct PointlikeCherenkovEmitter{T, N} <: CherenkovEmitter{T}
+    position::SVector{3,T}
+    direction::SVector{3,T}
+    time::T
+    photons::Int64
+    spectrum::CherenkovSpectrum{T, N}
+end
+
+function PointlikeCherenkovEmitter(particle::Particle, medium::MediumProperties, wl_range::Tuple{T, T}) where {T<:Real}
+    photons = pois_rand(total_lightyield(particle, medium, wl_range))
+    spectrum = CherenkovSpectrum(wl_range, 20, medium)
+    PointlikeCherenkovEmitter(particle.position, particle.direction, particle.time, photons, spectrum)
+end
+
+
 end
