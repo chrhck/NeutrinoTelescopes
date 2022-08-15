@@ -30,7 +30,7 @@ model = data[:model] |> gpu
 
 output_trafos = [:log, :log, :neg_log_scale]
 
-distance = 50f0
+distance = 150f0
 n_pmts=16
 pmt_area=Float32((75e-3 / 2)^2*π)
 target_radius = 0.21f0
@@ -38,16 +38,16 @@ target = DetectionSphere(@SVector[0.0f0, 0.0f0, distance], target_radius, n_pmts
 
 targets = [target]
 
-zenith_angle = 120f0
-azimuth_angle = 30f0
+zenith_angle = 0f0
+azimuth_angle = 0f0
 
 pdir = sph_to_cart(deg2rad(zenith_angle), deg2rad(azimuth_angle))
 
 particle = Particle(
-        @SVector[0.0f0, 40.0f0, 0.0f0],
+        @SVector[0.0f0, 0f0, 0.0f0],
         pdir,
         0f0,
-        Float32(1E4),
+        Float32(1E5),
         PEMinus
 )
 
@@ -62,11 +62,7 @@ event = sample_event(poissons, shapes, sources)
 
 histogram(event)
 
-
-
-
-
-function propagate_source(source)
+#=function propagate_source(source, target)
     results = ppcu.propagate_photons(source, target, medium, 512, 92, Int32(100000))
     positions, directions, wavelengths, dist_travelled, times, stack_idx, n_ph_sim = results
 
@@ -92,28 +88,41 @@ function propagate_source(source)
 
     pmt_acc_weight = p_one_pmt_acc.(wavelengths)
 
-    log_dist, cos_obs_angle = source_to_input(sources[1], target)
-
-    dir_weight = get_dir_reweight(thetas, acos(cos_obs_angle), ref_ix)
     total_weight = abs_weight .* pmt_acc_weight
 
-    return DataFrame(:times => times, :total_weight => total_weight, :dir_weight => dir_weight, :thetas=>thetas, :directions=>directions, :ref_ix=>ref_ix)
+    return DataFrame(:times => times, :total_weight => total_weight, :thetas=>thetas, :directions=>directions, :ref_ix=>ref_ix)
 end
+=#
 
-prop_source = ExtendedCherenkovEmitter(particle, medium, (300f0, 800f0))
-prop_source2 = PointlikeIsotropicEmitter(particle.position, particle.time, prop_source.photons, CherenkovSpectrum((300f0, 800f0), 20, medium))
-prop_source3 = PointlikeCherenkovEmitter(particle, medium, (300f0, 800f0))
-
-
-prop_source2.photons
-prop_source3.photons
-
-results_iso = propagate_source(prop_source2)
-results_che = propagate_source(prop_source3)
+prop_source_ext = ExtendedCherenkovEmitter(particle, medium, (300f0, 800f0))
+prop_source_iso = PointlikeIsotropicEmitter(particle.position, particle.time, prop_source_ext.photons, CherenkovSpectrum((300f0, 800f0), 20, medium))
+prop_source_che = PointlikeCherenkovEmitter(particle, medium, (300f0, 800f0))
 
 
-src_targ = target.position - prop_source.position
-src_targ = src_targ ./ norm(src_targ)
+results_iso = ppcu.propagate_source(prop_source_iso, distance, medium)
+results_che = ppcu.propagate_source(prop_source_che, distance, medium)
+results_ext = ppcu.propagate_source(prop_source_ext, distance, medium)
+
+dir_weight =  get_dir_reweight.(results_iso[:, :directions], Ref(prop_source_che.direction), results_iso[:, :ref_ix])
+
+
+histogram(results_che[1][:, :tres], bins=-10:200)
+
+
+scatter(cos.(results_iso[1:500000, :thetas]), dir_weight[1:500000], alpha=1)
+
+histogram(cos.(results_che[:, :thetas]), weights=results_che[:, :total_weight], bins=-0:0.01:1, yscale=:log10, normalize=true)
+histogram!(cos.(results_iso[:, :thetas]), weights=results_iso[:, :total_weight].* dir_weight, bins=-0:0.01:1, yscale=:log10, normalize=true)
+
+histogram(results_che[:, :times], weights=results_che[:, :total_weight], bins=220:260, normalize=true)
+histogram!(results_iso[:, :times], weights=results_iso[:, :total_weight] .* dir_weight, bins=220:260, normalize=true)
+
+histogram(event[1], bins=200:5:400)
+histogram!(results_ext[:, :times], weights=results_ext[:, :total_weight],  bins=200:5:400)
+
+
+
+
 
 @show cos(results_iso[1, :directions][3] - dot(src_targ, prop_source.direction))
 
@@ -153,8 +162,6 @@ weights = [10, 10, 10, 1, 1, 1]
 histogram(test, weights=weights, bins=0:11)
 
 
-histogram(event[1] .- tgeo, normalize=true, bins=-50:50)
-histogram!(tres, weight=total_weight,  bins=-50:50, normalize=true)
 
 sources
 

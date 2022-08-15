@@ -21,7 +21,7 @@ using ParameterSchedulers: AbstractSchedule
 using Unitful
 using PhysicalConstants.CODATA2018
 using StaticArrays
-
+using Base.Iterators
 using Logging: with_logger
 using TensorBoardLogger: TBLogger, tb_increment, set_step!, set_step_increment!
 
@@ -31,6 +31,8 @@ using ..Medium
 using ..PhotonPropagationCuda
 using ..LightYield
 using ..Types
+using ..Utils
+using ..Spectral
 
 
 export get_dir_reweight, fit_photon_dist, make_photon_fits
@@ -42,24 +44,12 @@ export apply_transformation, reverse_transformation, transform_model_output!
 export poisson_dist_per_module, shape_mixture_per_module, evaluate_model, sample_event
 export NoSchedulePars, SinDecaySchedulePars, LRScheduleParams
 
-"""
-    get_dir_reweight(thetas::AbstractVector{T}, obs_angle::T, ref_ixs::AbstractVector{T})
-
-Calculate reweighting factor for photons from isotropic (4pi) emission to 
-Cherenkov angular emission.
-
-`thetas` are the photon zenith angles (relative to e_z)
-`obs_angle` is the observation angle (angle of the line of sight between receiver 
-and emitter and the Cherenkov emitter direction)
-`ref_ixs` are the refractive indices for each photon
-"""
-
 global c_vac_m_ns = ustrip(u"m/ns", SpeedOfLightInVacuum)
 
 
-function get_dir_reweight(em_dir::SVector{3, T}, source_targ_dir::SVector{3, T}, ref_ix::T) where {T<:Real}
-    
-    rot_ph_dir = rodrigues_rotation(source_targ_dir, SA[0., 0., 1.], em_dir)
+function get_dir_reweight(em_dir::SVector{3, T}, shower_axis::SVector{3, U}, ref_ix::T) where {T<:Real, U<:Real}
+    # Assume that source-target direction is e_z    
+    rot_ph_dir = rodrigues_rotation(shower_axis, SA[0., 0., 1.], em_dir)
 
     ph_cos_theta = rot_ph_dir[3]
     norm = cherenkov_ang_dist_int(ref_ix) .* 2
@@ -68,37 +58,28 @@ function get_dir_reweight(em_dir::SVector{3, T}, source_targ_dir::SVector{3, T},
 end
 
 
-function fit_photon_dist(obs_angles, obs_photon_df, n_ph_gen)
-    df = DataFrame(
-        obs_angle=Float64[],
-        fit_alpha=Float64[],
-        fit_theta=Float64[],
-        det_fraction=Float64[])
-
-
-
-    ph_directions = obs_photon_df[:, :initial_directions]
-    ph_ref_ix = obs_photon_df[:, :ref_ix]
+function fit_photon_dist(obs_photon_df, n_ph_gen)
+   
     ph_abs_weight = obs_photon_df[:, :abs_weight]
     ph_tres = obs_photon_df[:, :tres]
 
-
     pmt_acc_weight = p_one_pmt_acc.(obs_photon_df[:, :wavelength])
+    total_weight = ph_abs_weight .* pmt_acc_weight
 
-    for obs_angle in obs_angles
-        
-        source_targ_dir = sph_to_cart(obs_angle, 0)
-        
-        dir_weight = get_dir_reweight.(ph_directions, Ref(source_targ_dir), ph_ref_ix)
-        total_weight = dir_weight .* ph_abs_weight .* pmt_acc_weight
+    mask = ph_tres .>= 0
 
-        mask = ph_tres .>= 0
-
+    try
         dfit = fit_mle(Gamma, ph_tres[mask], total_weight[mask])
-        push!(df, (obs_angle, dfit.α, dfit.θ, sum(total_weight) / n_ph_gen))
+        dfit.α, dfit.θ, sum(total_weight) / n_ph_gen
+    catch e
+        @show ph_tres[mask]
+        @show total_weight[mask]
+        return (NaN, NaN, NaN)
     end
+    
+    
+    
 
-    df
 end
 
 """
@@ -114,12 +95,28 @@ function make_photon_fits(n_photons_per_dist::Int64, max_nph_det::Int64, n_dista
     s2 = SobolSeq([0.0f0], [Float32(log10(max_dist))])
     distances = 10 .^ reduce(hcat, next!(s2) for i in 1:n_distances)
 
-    results = Vector{Tuple{DataFrame, Int64}}(undef, n_distances)
+    results_fit = DataFrame(
+        fit_alpha=Float64[],
+        fit_theta=Float64[],
+        det_fraction=Float64[],
+        obs_angle=Float64[],
+        distance=Float64[]
+        )
 
-    @progress name = "Propagating photons" for (i, dist) in enumerate(distances)
+    obs_angles = reduce(hcat, next!(s) for i in 1:n_angles)
+
+    @progress name = "Propagating photons" for (dist, obs_angle) in product(distances, obs_angles)
         
-        prop_res, nph_sim = propagate_distance(dist, medium, n_photons_per_dist)
+     
+        direction = sph_to_cart(Float32(obs_angle), 0f0)
 
+        source = PointlikeCherenkovEmitter(SA[0f0, 0f0, 0f0], direction, 0f0, n_photons_per_dist, CherenkovSpectrum((300f0, 800f0), 20, medium))
+
+        prop_res, nph_sim = propagate_source(source, dist, medium, n_photons_per_dist)
+
+        if nrow(prop_res) == 0
+            continue
+        end
         # if we have more detected photons than we want, discard und upweight the rest
         if nrow(prop_res) > max_nph_det
             upweight = nrow(prop_res) / max_nph_det
@@ -127,20 +124,13 @@ function make_photon_fits(n_photons_per_dist::Int64, max_nph_det::Int64, n_dista
             prop_res[:, :abs_weight] .*= upweight
         end
 
-        results[i] = prop_res, nph_sim
-
+        fit_result = fit_photon_dist(prop_res, nph_sim)
+   
+        if fit_result[1] != NaN
+            push!(results_fit, (fit_alpha=fit_result[1], fit_theta=fit_result[2], det_fraction=fit_result[3], obs_angle=obs_angle, distance=dist))
+        end
     end
-
-    obs_angles = reduce(hcat, next!(s) for i in 1:n_angles)
-
-    results_fit = Vector{DataFrame}(undef, n_distances)
-
-    @progress name = "Propagating photons" for (i, dist) in enumerate(distances)
-        results_fit[i] = fit_photon_dist(obs_angles, results[i][1], results[i][2])
-    end
-
-    vcat(results_fit..., source=:distance => vec(distances))
-
+    results_fit
 end
 
 

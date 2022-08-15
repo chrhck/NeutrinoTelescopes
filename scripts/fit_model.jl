@@ -48,7 +48,7 @@ model = cpu(model)
 
 
 
-n_it = 50
+n_it = 10
 ho = @hyperopt for i = n_it,
     sampler = CLHSampler(dims=[Categorical(3), Continuous(), Categorical(5), Continuous(), Continuous(), Categorical(4)]),# This is default if none provided
     batch_size = [2048, 4096, 8192],
@@ -69,4 +69,23 @@ end
 
 plot(ho, yscale=:log10)
 
-ho
+min_pars = ho.minimizer
+lr_ratio = min_pars[5]
+lr_max = min_pars[4]
+lr_min = lr_ratio * lr_max
+lr_period = min_pars[6]
+
+params = Dict(
+		:width=>min_pars[3],
+		:lr_schedule_pars=>  SinDecaySchedulePars(lr_min=lr_min, lr_max=lr_max, lr_period=lr_period),
+		:batch_size=>min_pars[1],
+		:data_file=>infile,
+		:dropout_rate=>min_pars[2],
+		:seed=>31138,
+		:epochs=>epochs,
+		)
+
+
+model, _ = train_mlp(;params...)
+model = cpu(model)
+@save joinpath(@__DIR__, "../assets/photon_model.bson") model params

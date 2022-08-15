@@ -14,7 +14,7 @@ using Logging
 
 export cuda_propagate_photons!, initialize_photon_arrays, process_output
 export cherenkov_ang_dist, cherenkov_ang_dist_int
-export propagate_distance
+export propagate_source
 export fit_photon_dist, make_photon_fits
 
 using ..Utils
@@ -249,10 +249,10 @@ function cuda_propagate_photons!(
     out_err_code::CuDeviceVector{Int32},
     stack_len::Int32,
     seed::Int64,
-    ::Val{source},
+    source::U,
     target_pos::SVector{3,T},
     target_r::T,
-    ::Val{MediumProp}) where {T,source,MediumProp}
+    ::Val{MediumProp}) where {T, U <: PhotonSource{T},MediumProp}
 
     block = blockIdx().x
     thread = threadIdx().x
@@ -444,20 +444,15 @@ function propagate_photons(
 
     @cuda threads = threads blocks = blocks shmem = sizeof(Int64) cuda_propagate_photons!(
         positions, directions, wavelengths, dist_travelled, times, stack_idx, n_ph_sim, err_code, stack_len, Int64(0),
-        Val(source), target.position, target.radius, Val(medium))
+        source, target.position, target.radius, Val(medium))
 
     return (positions, directions, wavelengths, dist_travelled, times, stack_idx, n_ph_sim)
 end
 
-function propagate_distance(distance::Float32, medium::MediumProperties, n_ph_gen::Int64, n_pmts=16, pmt_area=Float32((75e-3 / 2)^2*π))
+function propagate_source(source::PhotonSource, distance, medium::MediumProperties, n_pmts=16, pmt_area=Float32((75e-3 / 2)^2*π))
 
     target_radius = 0.21f0
-    source = PointlikeIsotropicEmitter(
-        @SVector[0.0f0, 0.0f0, 0.0f0],
-        0.0f0,
-        n_ph_gen,
-        CherenkovSpectrum((300.0f0, 800.0f0), 20, medium),
-    )
+    distance = Float32(distance)
     target = DetectionSphere(@SVector[0.0f0, 0.0f0, distance], target_radius, n_pmts, pmt_area)
 
     threads = 512
@@ -481,13 +476,15 @@ function propagate_distance(distance::Float32, medium::MediumProperties, n_ph_ge
     =#
 
 
+    n_ph_gen = source.photons
+
     if n_ph_gen > max_total_stack_len
         @debug "Estimating acceptance fraction"
         test_nph = 1E5
         # Estimate required_stack_length
         stack_len = Int32(cld(1E5, blocks))
 
-        test_source = PhotonSource(
+        test_source = PointlikeIsotropicEmitter(
             @SVector[0.0f0, 0.0f0, 0.0f0],
             0.0f0,
             Int64(test_nph),
@@ -527,14 +524,14 @@ function propagate_distance(distance::Float32, medium::MediumProperties, n_ph_ge
         blocks,
         stack_len)
 
+
+    n_ph_sim = Vector(n_ph_sim)[1]
     
     if all(stack_idx .== 0)
         @warn "No photons survived (distance=$distance, n_ph_gen: $n_ph_gen)"
-        return DataFrame()
+        return DataFrame(), n_ph_sim
     end
 
-    
-    n_ph_sim = Vector(n_ph_sim)[1]
 
     dist_travelled = process_output(Vector(dist_travelled), Vector(stack_idx))
     wavelengths = process_output(Vector(wavelengths), Vector(stack_idx))
