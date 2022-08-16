@@ -20,7 +20,7 @@ pmt_area=Float32((75e-3 / 2)^2*π)
 target_radius = 0.21f0
 
 suite = BenchmarkGroup()
-n_photons = exp10.(4:0.5:9)
+n_photons = exp10.(5:0.5:11)
 target = DetectionSphere(@SVector[0.0f0, 0.0f0, distance], target_radius, n_pmts, pmt_area)
 
 for nph in n_photons
@@ -29,14 +29,14 @@ for nph in n_photons
 end
 
 tune!(suite)
-results = run(suite)
+results = run(suite, seconds=10)
 
 plot(results)
 
 medr = median(results)
 
 scatter(collect(keys(medr)), getproperty.(values(medr), (:time, )) ./ (keys(medr)),
- xscale=:log10, yscale=:log10, ylim=(1E-1, 1E5))
+ xscale=:log10, yscale=:log10, ylim=(1E-10, 1E5))
 
 
 
