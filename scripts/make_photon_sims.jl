@@ -2,6 +2,7 @@ using Parquet
 using DataFrames
 using NeutrinoTelescopes.Medium
 using NeutrinoTelescopes.Modelling
+using Logging
 using TerminalLoggers
 
 global_logger(TerminalLogger(right_justify=120))

@@ -507,7 +507,7 @@ function propagate_source(source::PhotonSource, distance, medium::MediumProperti
         est_surv = acc_frac * n_ph_gen
         
         if est_surv > max_total_stack_len
-            @warn "WARNING: Estimating more than $(max_total_stack_len) surviving photons, number of generated photons might be truncated"
+            @warn "WARNING: Estimating more than $(max_total_stack_len) surviving photons, number of generated photons might be truncated" maxlog=3
             est_surv = max_total_stack_len
         end
 

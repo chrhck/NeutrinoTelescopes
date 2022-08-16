@@ -103,31 +103,33 @@ function make_photon_fits(n_photons_per_dist::Int64, max_nph_det::Int64, n_dista
         distance=Float64[]
         )
 
-    obs_angles = reduce(hcat, next!(s) for i in 1:n_angles)
+    
 
-    @progress name = "Propagating photons" for (dist, obs_angle) in product(distances, obs_angles)
-        
-     
-        direction = sph_to_cart(Float32(obs_angle), 0f0)
+    @progress name = "Propagating photons" for dist in distances
+        obs_angles = reduce(hcat, next!(s) for i in 1:n_angles)
+        for obs_angle in obs_angles
 
-        source = PointlikeCherenkovEmitter(SA[0f0, 0f0, 0f0], direction, 0f0, n_photons_per_dist, CherenkovSpectrum((300f0, 800f0), 20, medium))
+            direction = sph_to_cart(Float32(obs_angle), 0f0)
 
-        prop_res, nph_sim = propagate_source(source, dist, medium, n_photons_per_dist)
+            source = PointlikeCherenkovEmitter(SA[0f0, 0f0, 0f0], direction, 0f0, n_photons_per_dist, CherenkovSpectrum((300f0, 800f0), 20, medium))
 
-        if nrow(prop_res) == 0
-            continue
-        end
-        # if we have more detected photons than we want, discard und upweight the rest
-        if nrow(prop_res) > max_nph_det
-            upweight = nrow(prop_res) / max_nph_det
-            prop_res = prop_res[1:max_nph_det, :]
-            prop_res[:, :abs_weight] .*= upweight
-        end
+            prop_res, nph_sim = propagate_source(source, dist, medium, n_photons_per_dist)
 
-        fit_result = fit_photon_dist(prop_res, nph_sim)
-   
-        if fit_result[1] != NaN
-            push!(results_fit, (fit_alpha=fit_result[1], fit_theta=fit_result[2], det_fraction=fit_result[3], obs_angle=obs_angle, distance=dist))
+            if nrow(prop_res) == 0
+                continue
+            end
+            # if we have more detected photons than we want, discard und upweight the rest
+            if nrow(prop_res) > max_nph_det
+                upweight = nrow(prop_res) / max_nph_det
+                prop_res = prop_res[1:max_nph_det, :]
+                prop_res[:, :abs_weight] .*= upweight
+            end
+
+            fit_result = fit_photon_dist(prop_res, nph_sim)
+    
+            if fit_result[1] != NaN
+                push!(results_fit, (fit_alpha=fit_result[1], fit_theta=fit_result[2], det_fraction=fit_result[3], obs_angle=obs_angle, distance=dist))
+            end
         end
     end
     results_fit
