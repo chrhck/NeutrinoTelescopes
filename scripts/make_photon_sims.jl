@@ -2,6 +2,9 @@ using Parquet
 using DataFrames
 using NeutrinoTelescopes.Medium
 using NeutrinoTelescopes.Modelling
+using TerminalLoggers
+
+global_logger(TerminalLogger(right_justify=120))
 
 medium = Medium.make_cascadia_medium_properties(Float32)
 
