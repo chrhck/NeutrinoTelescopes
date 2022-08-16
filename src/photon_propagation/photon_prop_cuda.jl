@@ -89,12 +89,15 @@ end
 
 @inline initialize_wavelength(::T) where {T<:Spectrum} = throw(ArgumentError("Cannot initialize $T"))
 @inline initialize_wavelength(spectrum::Monochromatic{T}) where {T} = spectrum.wavelength
+@inline initialize_wavelength(spectrum::CuDeviceTexture{T, 1}) where {T} = @inbounds spectrum[rand(T)]
+
 @inline function initialize_wavelength(spectrum::CherenkovSpectrum{T}) where {T}
     fast_linear_interp(rand(T), spectrum.knots, T(0), T(1))
 end
 
-@inline function initialize_photon_state(source::PointlikeIsotropicEmitter{T}, ::MediumProperties) where {T <: Real}
-    wl = initialize_wavelength(source.spectrum)
+@inline function initialize_photon_state(source::PointlikeIsotropicEmitter{T}, ::MediumProperties, spectrum_texture::CuDeviceTexture{T, 1}) where {T <: Real}
+    #wl = initialize_wavelength(source.spectrum)
+    wl = initialize_wavelength(spectrum_texture)
     pos = source.position
     dir = initialize_direction_isotropic(T)
     PhotonState(pos, dir, T(0), wl)
@@ -119,16 +122,11 @@ end
 end
 
 
-@inline function initialize_photon_state(source::ExtendedCherenkovEmitter{T, N}, medium::MediumProperties) where {T <:Real, N}
-    wl = initialize_wavelength(source.spectrum)
+@inline function initialize_photon_state(source::ExtendedCherenkovEmitter{T, N}, medium::MediumProperties, spectrum_texture::CuDeviceTexture{T, 1}) where {T <:Real, N}
+    #wl = initialize_wavelength(source.spectrum)
+    wl = initialize_wavelength(spectrum_texture)
 
-    long_param = source.long_param
-
-    scale = T(1 / long_param.b)
-    shape = T(long_param.a)
-
-    lrad = long_param.lrad
-    long_pos = rand_gamma(shape, scale, Float32) * lrad
+    long_pos = rand_gamma(T(source.long_param.a), T(1 / source.long_param.b), Float32) * source.long_param.lrad
 
     pos::SVector{3, T} = source.position .+ long_pos .* source.direction
     time = source.time + long_pos / T(c_vac_m_ns)
@@ -138,9 +136,10 @@ end
     PhotonState(pos, ph_dir, time, wl)
 end
 
-@inline function initialize_photon_state(source::PointlikeCherenkovEmitter{T, N}, medium::MediumProperties) where {T <:Real, N}
-    wl = initialize_wavelength(source.spectrum)
-    
+@inline function initialize_photon_state(source::PointlikeCherenkovEmitter{T, N}, medium::MediumProperties, spectrum_texture::CuDeviceTexture{T, 1}) where {T <:Real, N}
+    #wl = initialize_wavelength(source.spectrum)
+    wl = initialize_wavelength(spectrum_texture)
+
     pos::SVector{3, T} = source.position 
     time = source.time 
     
@@ -250,6 +249,7 @@ function cuda_propagate_photons!(
     stack_len::Int32,
     seed::Int64,
     source::U,
+    spectrum_texture::CuDeviceTexture{T, 1},
     target_pos::SVector{3,T},
     target_r::T,
     ::Val{MediumProp}) where {T, U <: PhotonSource{T},MediumProp}
@@ -288,7 +288,7 @@ function cuda_propagate_photons!(
             break
         end
 
-        photon_state = initialize_photon_state(source, medium)
+        photon_state = initialize_photon_state(source, medium, spectrum_texture)
 
         dir::SVector{3,T} = photon_state.direction
         initial_dir = copy(dir)
@@ -401,7 +401,7 @@ function process_output(output::AbstractVector{T}, stack_pointers::AbstractVecto
 end
 
 
-function initialize_photon_arrays(stack_length::Int32, blocks, type::Type)
+function initialize_photon_arrays(stack_length::Integer, blocks, type::Type)
     (   
         CuVector(zeros(SVector{3,type}, stack_length * blocks)), # position
         CuVector(zeros(SVector{3,type}, stack_length * blocks)), # direction
@@ -435,17 +435,26 @@ function propagate_photons(
     source::PhotonSource,
     target::PhotonTarget,
     medium::MediumProperties,
-    threads::Integer,
-    blocks::Integer,
     stack_len::Integer)
 
-    positions, directions, wavelengths, dist_travelled, times, stack_idx, n_ph_sim = initialize_photon_arrays(stack_len, blocks, Float32)
+    positions, directions, wavelengths, dist_travelled, times, stack_idx, n_ph_sim = initialize_photon_arrays(1, 1, Float32)
     err_code = CuVector(zeros(Int32, 1))
 
-    @cuda threads = threads blocks = blocks shmem = sizeof(Int64) cuda_propagate_photons!(
-        positions, directions, wavelengths, dist_travelled, times, stack_idx, n_ph_sim, err_code, stack_len, Int64(0),
-        source, target.position, target.radius, Val(medium))
+    spectrum_vals = CuTextureArray(source.spectrum.knots)
+    spectrum_texture = CuTexture(spectrum_vals; interpolation=CUDA.LinearInterpolation(), normalized_coordinates=true)
 
+    kernel = @cuda launch=false cuda_propagate_photons!(
+        positions, directions, wavelengths, dist_travelled, times, stack_idx, n_ph_sim, err_code, stack_len, Int64(0),
+        source, spectrum_texture, target.position, target.radius, Val(medium))
+
+    threads, blocks = CUDA.launch_configuration(kernel.fun, shmem=sizeof(Int64))
+    
+    positions, directions, wavelengths, dist_travelled, times, stack_idx, n_ph_sim = initialize_photon_arrays(stack_len, blocks, Float32)
+
+   
+    kernel(
+        positions, directions, wavelengths, dist_travelled, times, stack_idx, n_ph_sim, err_code, stack_len, Int64(0),
+        source, spectrum_texture, target.position, target.radius, Val(medium); threads=threads, blocks=blocks, shmem=sizeof(Int64))
     return (positions, directions, wavelengths, dist_travelled, times, stack_idx, n_ph_sim)
 end
 
@@ -455,26 +464,10 @@ function propagate_source(source::PhotonSource, distance, medium::MediumProperti
     distance = Float32(distance)
     target = DetectionSphere(@SVector[0.0f0, 0.0f0, distance], target_radius, n_pmts, pmt_area)
 
-    threads = 512
-    blocks = 92
-
     avail_mem = CUDA.totalmem(collect(CUDA.devices())[1])
     max_total_stack_len = calculate_max_stack_size(0.5*avail_mem, blocks)
 
     @debug "Max stack size (90%): $max_total_stack_len"
-
-    #=
-     ckernel = @cuda launch=false cuda_propagate_photons!(
-        positions, directions, wavelengths, dist_travelled, times, stack_idx, n_ph_sim, err_code, stack_len, Int64(0),
-        Val(source), target.position, target.radius, Val(medium))
-
-    config = launch_configuration(ckernel.fun, shmem=sizeof(Int64))
-    
-    ckernel(
-        positions, directions, wavelengths, dist_travelled, times, stack_idx, n_ph_sim, err_code, stack_len, Int64(0),
-        Val(source), target.position, target.radius, Val(medium); threads=config.threads, blocks=config.blocks, shmem=sizeof(Int64))
-    =#
-
 
     n_ph_gen = source.photons
 
@@ -494,8 +487,6 @@ function propagate_source(source::PhotonSource, distance, medium::MediumProperti
             test_source,
             target,
             medium,
-            threads,
-            blocks,
             stack_len)
 
         n_ph_sim = Vector(n_ph_sim)[1]
@@ -520,8 +511,6 @@ function propagate_source(source::PhotonSource, distance, medium::MediumProperti
         source,
         target,
         medium,
-        threads,
-        blocks,
         stack_len)
 
 

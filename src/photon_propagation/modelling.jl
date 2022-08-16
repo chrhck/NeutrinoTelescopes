@@ -111,7 +111,7 @@ function make_photon_fits(n_photons_per_dist::Int64, max_nph_det::Int64, n_dista
 
             direction = sph_to_cart(Float32(obs_angle), 0f0)
 
-            source = PointlikeCherenkovEmitter(SA[0f0, 0f0, 0f0], direction, 0f0, n_photons_per_dist, CherenkovSpectrum((300f0, 800f0), 20, medium))
+            source = PointlikeCherenkovEmitter(SA[0f0, 0f0, 0f0], direction, 0f0, n_photons_per_dist, CherenkovSpectrum((300f0, 800f0), 40, medium))
 
             prop_res, nph_sim = propagate_source(source, dist, medium, n_photons_per_dist)
 

@@ -180,8 +180,8 @@ function get_refractive_index_fry(
     quan_fry_params::Tuple{T, T, T, T}
 ) where {T}
     a01, a2, a3, a4 = quan_fry_params
-    x = 1 / wavelength
-    x2 = x * x
+    x::T = one(T) / wavelength
+    x2::T = x * x
     # a01 + x*a2 + x^2 * a3 + x^3 * a4
     return T(fma(x, a2, a01) + fma(x2, a3, x2*x*a4))
 end
@@ -199,9 +199,9 @@ function get_dispersion_fry(
     quan_fry_params::Tuple{T, T, T, T}
 ) where {T<:Real}
     a01, a2, a3, a4 = quan_fry_params
-    x = 1 / wavelength
+    x = one(T) / wavelength
 
-    return T(a2 + 2*x*a3 + 3*x^2*a4) * (-1)/wavelength^2
+    return T(a2 + T(2)*x*a3 + T(3)*x^2*a4) * T(-1)/wavelength^2
 end
 
 function get_dispersion_fry(
@@ -246,14 +246,14 @@ get_dispersion(wavelength::Real, medium::WaterProperties) = get_dispersion_fry(
     medium._quan_fry_params
 )
 
-get_cherenkov_angle(wavelength, medium::MediumProperties) = acos(1/get_refractive_index(wavelength, medium))
+get_cherenkov_angle(wavelength, medium::MediumProperties) = acos(one(typeof(wavelength))/get_refractive_index(wavelength, medium))
 
 
-function get_group_velocity(wavelength::Real, medium::MediumProperties)
+function get_group_velocity(wavelength::T, medium::MediumProperties) where {T<:Real}
     global c_vac_m_ns
-    ref_ix = get_refractive_index(wavelength, medium)
-    λ_0 = ref_ix * wavelength
-    c_vac_m_ns / (ref_ix - λ_0 * get_dispersion(wavelength, medium))
+    ref_ix::T = get_refractive_index(wavelength, medium)
+    λ_0::T = ref_ix * wavelength
+    T(c_vac_m_ns) / (ref_ix - λ_0 * get_dispersion(wavelength, medium))
 end
 
 
@@ -270,12 +270,12 @@ get_sca_len_part_conc(wavelength; vol_conc_small_part, vol_conc_large_part)
 @inline function get_sca_len_part_conc(wavelength::T; vol_conc_small_part::Real, vol_conc_large_part::Real) where {T<:Real}
 
     ref_wlen::T = 550  # nm
-    x = ref_wlen / wavelength
+    x::T = ref_wlen / wavelength
 
     sca_coeff = (
-        0.0017 * x^4.3
-        + 1.34 * vol_conc_small_part * x^1.7
-        + 0.312 * vol_conc_large_part * x^0.3
+        T(0.0017) * x^T(4.3)
+        + T(1.34) * vol_conc_small_part * x^T(1.7)
+        + T(0.312) * vol_conc_large_part * x^T(0.3)
     )
 
     return T(1 / sca_coeff)
