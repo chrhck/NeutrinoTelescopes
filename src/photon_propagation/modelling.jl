@@ -72,8 +72,23 @@ function fit_photon_dist(obs_photon_df, n_ph_gen)
         dfit = fit_mle(Gamma, ph_tres[mask], total_weight[mask])
         dfit.α, dfit.θ, sum(total_weight) / n_ph_gen
     catch e
-        @show ph_tres[mask]
-        @show total_weight[mask]
+        #=nanmask = isnan.(total_weight[mask])
+        @show total_weight[mask][nanmask]
+        @show ph_abs_weight[mask][nanmask]
+        @show pmt_acc_weight[mask][nanmask]
+
+        tot_mask = mask .&& nanmask
+
+        ixs = collect(1:nrow(obs_photon_df))
+        @show obs_photon_df[ixs[tot_mask], :]
+
+        nanmask = isnan.(ph_tres[mask])
+        @show ph_tres[mask][nanmask]
+
+        @show suffstats(Gamma, ph_tres[mask], total_weight[mask])
+        @show ph_tres[mask][1:10]
+        @show total_weight[mask][1:10]
+        =#
         return (NaN, NaN, NaN)
     end
     
@@ -111,13 +126,30 @@ function make_photon_fits(n_photons_per_dist::Int64, max_nph_det::Int64, n_dista
 
             direction = sph_to_cart(Float32(obs_angle), 0f0)
 
-            source = PointlikeCherenkovEmitter(SA[0f0, 0f0, 0f0], direction, 0f0, n_photons_per_dist, CherenkovSpectrum((300f0, 800f0), 40, medium))
 
-            prop_res, nph_sim = propagate_source(source, dist, medium, n_photons_per_dist)
+            nph_this = n_photons_per_dist
+            prop_res = nothing
+            nph_sim = nothing
+            
+            while true
+                source = PointlikeCherenkovEmitter(SA[0f0, 0f0, 0f0], direction, 0f0, nph_this, CherenkovSpectrum((300f0, 800f0), 40, medium))
+                prop_res, nph_sim = propagate_source(source, dist, medium)
 
-            if nrow(prop_res) == 0
+                if nrow(prop_res) > 10
+                    break
+                end
+                nph_this *= 10
+
+                if nph_this > 1E12
+                    @warn "No photons detected after propagating 1E12, skipping" dist obs_angle
+                    break
+                end
+            end
+
+            if nrow(prop_res) <= 10
                 continue
             end
+
             # if we have more detected photons than we want, discard und upweight the rest
             if nrow(prop_res) > max_nph_det
                 upweight = nrow(prop_res) / max_nph_det

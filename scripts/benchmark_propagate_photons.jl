@@ -25,7 +25,7 @@ target = DetectionSphere(@SVector[0.0f0, 0.0f0, distance], target_radius, n_pmts
 
 for nph in n_photons
     source = PointlikeIsotropicEmitter(SA[0f0, 0f0, 0f0], 0f0, Int64(ceil(nph)), CherenkovSpectrum((300f0, 800f0), 50, medium))
-    suite[nph] = @benchmarkable $PhotonPropagationCuda.propagate_photons($source, $target, $medium, Int32(1E5))
+    suite[nph] = @benchmarkable $PhotonPropagationCuda.propagate_photons($source, $target, $medium)
 end
 
 tune!(suite)

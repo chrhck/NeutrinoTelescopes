@@ -434,8 +434,7 @@ end
 function propagate_photons(
     source::PhotonSource,
     target::PhotonTarget,
-    medium::MediumProperties,
-    stack_len::Integer)
+    medium::MediumProperties)
 
     positions, directions, wavelengths, dist_travelled, times, stack_idx, n_ph_sim = initialize_photon_arrays(1, 1, Float32)
     err_code = CuVector(zeros(Int32, 1))
@@ -444,13 +443,15 @@ function propagate_photons(
     spectrum_texture = CuTexture(spectrum_vals; interpolation=CUDA.LinearInterpolation(), normalized_coordinates=true)
 
     kernel = @cuda launch=false cuda_propagate_photons!(
-        positions, directions, wavelengths, dist_travelled, times, stack_idx, n_ph_sim, err_code, stack_len, Int64(0),
+        positions, directions, wavelengths, dist_travelled, times, stack_idx, n_ph_sim, err_code, Int32(1E6), Int64(0),
         source, spectrum_texture, target.position, target.radius, Val(medium))
 
-    threads, blocks = CUDA.launch_configuration(kernel.fun, shmem=sizeof(Int64))
-    
-    positions, directions, wavelengths, dist_travelled, times, stack_idx, n_ph_sim = initialize_photon_arrays(stack_len, blocks, Float32)
+    blocks, threads = CUDA.launch_configuration(kernel.fun, shmem=sizeof(Int64))
 
+    avail_mem = CUDA.totalmem(collect(CUDA.devices())[1])
+    max_total_stack_len = calculate_max_stack_size(0.5*avail_mem, blocks)
+    stack_len = Int32(cld(max_total_stack_len, blocks))
+    positions, directions, wavelengths, dist_travelled, times, stack_idx, n_ph_sim = initialize_photon_arrays(stack_len, blocks, Float32)
    
     kernel(
         positions, directions, wavelengths, dist_travelled, times, stack_idx, n_ph_sim, err_code, stack_len, Int64(0),
@@ -464,9 +465,7 @@ function propagate_source(source::PhotonSource, distance, medium::MediumProperti
     distance = Float32(distance)
     target = DetectionSphere(@SVector[0.0f0, 0.0f0, distance], target_radius, n_pmts, pmt_area)
 
-    avail_mem = CUDA.totalmem(collect(CUDA.devices())[1])
-    max_total_stack_len = calculate_max_stack_size(0.5*avail_mem, blocks)
-
+    #=
     @debug "Max stack size (90%): $max_total_stack_len"
 
     n_ph_gen = source.photons
@@ -506,18 +505,16 @@ function propagate_source(source::PhotonSource, distance, medium::MediumProperti
     else
         stack_len = Int32(1E6)
     end
-
+    =#
     positions, directions, wavelengths, dist_travelled, times, stack_idx, n_ph_sim = propagate_photons(
         source,
         target,
-        medium,
-        stack_len)
+        medium)
 
 
     n_ph_sim = Vector(n_ph_sim)[1]
     
     if all(stack_idx .== 0)
-        @warn "No photons survived (distance=$distance, n_ph_gen: $n_ph_gen)"
         return DataFrame(), n_ph_sim
     end
 
@@ -527,7 +524,8 @@ function propagate_source(source::PhotonSource, distance, medium::MediumProperti
     directions = process_output(Vector(directions), Vector(stack_idx))
     times = process_output(Vector(times), Vector(stack_idx))
 
-    abs_weight = convert(Vector{Float64}, exp.(-dist_travelled ./ get_absorption_length.(wavelengths, Ref(medium))))
+    abs_length = get_absorption_length.(wavelengths, Ref(medium))
+    abs_weight = convert(Vector{Float64}, exp.(-dist_travelled ./ abs_length))
 
     ref_ix = get_refractive_index.(wavelengths, Ref(medium))
     c_vac = ustrip(u"m/ns", SpeedOfLightInVacuum)
@@ -545,6 +543,7 @@ function propagate_source(source::PhotonSource, distance, medium::MediumProperti
         ref_ix=ref_ix,
         abs_weight=abs_weight,
         dist_travelled=dist_travelled,
+        abs_length=abs_length,
         wavelength=wavelengths),
     n_ph_sim)
 end

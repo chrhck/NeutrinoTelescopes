@@ -25,8 +25,13 @@ function fast_linear_interp(x_eval::T, xs::AbstractVector{T}, ys::AbstractVector
     upper = last(xs)
     x_eval = clamp(x_eval, lower, upper)
 
+    if x_eval == lower
+        return ys[1]
+    elseif x_eval == upper 
+        return ys[end]
+    end
 
-    ix_upper = searchsortedfirst(xs, x_eval)
+    ix_upper = searchsortedfirst(xs, x_eval)    
     ix_lower = ix_upper - 1
 
     @inbounds edge_l = xs[ix_lower]
