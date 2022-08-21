@@ -14,7 +14,7 @@ using StaticArrays
 using LinearAlgebra
 
 using ..Medium
-using ..Utils
+using ...Utils
 
 abstract type Spectrum end
 

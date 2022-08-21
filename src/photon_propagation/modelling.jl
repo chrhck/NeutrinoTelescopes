@@ -25,13 +25,13 @@ using Base.Iterators
 using Logging: with_logger
 using TensorBoardLogger: TBLogger, tb_increment, set_step!, set_step_increment!
 
+using ...Types
+using ...Utils
 using ..Emission
 using ..Detection
 using ..Medium
 using ..PhotonPropagationCuda
 using ..LightYield
-using ..Types
-using ..Utils
 using ..Spectral
 
 

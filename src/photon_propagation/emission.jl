@@ -7,9 +7,9 @@ using PoissonRandom
 
 
 using ..Spectral
-using ..Types
 using ..LightYield
 using ..Medium
+using ...Types
 
 export AngularEmissionProfile
 export PhotonSource, PointlikeIsotropicEmitter, ExtendedCherenkovEmitter, CherenkovEmitter, PointlikeCherenkovEmitter

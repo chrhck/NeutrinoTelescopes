@@ -17,13 +17,14 @@ export cherenkov_ang_dist, cherenkov_ang_dist_int
 export propagate_source
 export fit_photon_dist, make_photon_fits
 
-using ..Utils
+using ...Utils
+using ...Types
 using ..Medium
 using ..Spectral
 using ..Emission
 using ..Detection
 using ..LightYield
-using ..Types
+
 
 const c_vac_m_ns = ustrip(u"m/ns", SpeedOfLightInVacuum)
 
@@ -375,13 +376,214 @@ function cuda_propagate_photons!(
 
 end
 
+@inline function is_in(val, l, u)
+    return (l < val) && (u > val)
+end
+
+#= IGNORE MODULE SHADOWING =#
+function cuda_propagate_multi_target!(
+    out_positions::CuDeviceVector{SVector{3,T}},
+    out_directions::CuDeviceVector{SVector{3,T}},
+    out_wavelengths::CuDeviceVector{T},
+    out_dist_travelled::CuDeviceVector{T},
+    out_times::CuDeviceVector{T},
+    out_stack_pointers::CuDeviceVector{Int64},
+    out_n_ph_simulated::CuDeviceVector{Int64},
+    out_err_code::CuDeviceVector{Int32},
+    stack_len::Int32,
+    seed::Int64,
+    source::U,
+    spectrum_texture::CuDeviceTexture{T, 1},
+    target_x::CuDeviceVector{T},
+    target_y::CuDeviceVector{T},
+    target_z::CuDeviceVector{T},
+    target_r::T,
+    ::Val{MediumProp}) where {T, U <: PhotonSource{T}, MediumProp}
+
+    block = blockIdx().x
+    thread = threadIdx().x
+    blockdim = blockDim().x
+    griddim = gridDim().x
+    warpsize = CUDA.warpsize()
+    # warp_ix = thread % warp
+    global_thread_index::Int32 = (block - Int32(1)) * blockdim + thread
+
+    cache = @cuDynamicSharedMem(Int64, 1)
+    Random.seed!(seed + global_thread_index)
+
+    n_targets = length(target_x)
+    targets_per_block::Int32 = cld(n_targets, griddim)
+    
+    @cuassert targets_per_block * griddim == n_targets
+
+    positions_x = @cuStaticSharedMem(T, targets_per_block)
+    positions_y = @cuStaticSharedMem(T, targets_per_block)
+    positions_z = @cuStaticSharedMem(T, targets_per_block)
+
+    for i in range((block-1)*blockdim+(thread-1), blockdim*griddim, n_targets)
+        positions_x[i % targets_per_block + 1] = target_x[i]
+    end
+
+    for i in range((block-1)*blockdim+(thread-1), blockdim*griddim, n_targets)
+        positions_y[i % targets_per_block + 1] = target_y[i]
+    end
+
+    for i in range((block-1)*blockdim+(thread-1), blockdim*griddim, n_targets)
+        positions_z[i % targets_per_block + 1] = target_z[i]
+    end
+
+    this_n_photons::Int64 = cld(source.photons, blockdim)
+
+    medium::MediumProperties{T} = MediumProp
+
+    target_rsq = target_r^2
+    # stack_len is stack_len per block
+
+    ix_offset::Int64 = (block - 1) * (stack_len) + 1
+    @inbounds cache[1] = ix_offset
+
+    safe_margin = max(0, (blockdim - warpsize))
+    n_photons_simulated = Int64(0)
+
+
+    @inbounds for i in 1:this_n_photons
+
+        if cache[1] > (ix_offset + stack_len - safe_margin)
+            CUDA.sync_threads()
+            out_err_code[1] = -1
+            break
+        end
+
+        photon_state = initialize_photon_state(source, medium, spectrum_texture)
+
+        dir::SVector{3,T} = photon_state.direction
+        initial_dir = copy(dir)
+        wavelength::T = photon_state.wavelength
+        pos::SVector{3,T} = photon_state.position
+
+        time = photon_state.time
+        dist_travelled = T(0)
+
+        sca_len::T = get_scattering_length(wavelength, medium)
+        c_grp::T = get_group_velocity(wavelength, medium)
+
+
+        steps::Int32 = 15
+        for nstep in Int32(1):steps
+
+            eta = rand(T)
+            step_size::Float32 = -CUDA.log(eta) * sca_len
+
+
+            endpos = update_position(pos, dir, step_size)
+
+            for ntarget in 1:targets_per_block
+
+                target_pos = SA[target_x[ntarget], target_y[ntarget], target_z[ntarget]]
+                isec = false
+
+                if sign(dir[1]) > 0 # positive x
+                    isin_comp = is_in(target_pos[1], pos[1], endpos[1])
+                else
+                    isin_comp = is_in(target_pos[1], endpos[1], pos[1])
+                
+                if not isin_comp
+                    continue
+                end
+
+                if sign(dir[2]) > 0 # positive x
+                    isin_comp = is_in(target_pos[2], pos[2], endpos[2])
+                else
+                    isin_comp = is_in(target_pos[2], endpos[2], pos[2])
+                
+                if not isin_comp
+                    continue
+                end
+
+                if sign(dir[3]) > 0 # positive x
+                    isin_comp = is_in(target_pos[3], pos[3], endpos[3])
+                else
+                    isin_comp = is_in(target_pos[3], endpos[3], pos[3])
+                
+                if not isin_comp
+                    continue
+                end
+                
+                # Check intersection with module
+
+                # a = dot(dir, (pos - target.position))
+                # pp_norm_sq = norm(pos - target_pos)^2
+
+                a::T = T(0)
+                pp_norm_sq::T = T(0)
+
+                for j in Int32(1):Int32(3)
+                    dpos = (pos[j] - target_pos[j])
+                    a += dir[j] * dpos
+                    pp_norm_sq += dpos^2
+                end
+
+
+                b = CUDA.fma(a, a, -pp_norm_sq + target_rsq)
+                #b::Float32 = a^2 - (pp_norm_sq - target.radius^2)
+
+                isec = b >= 0
+
+                if isec
+                    # Uncommon branch
+                    # Distance of of the intersection point along the line
+                    d = -a - CUDA.sqrt(b)
+
+                    isec = (d > 0) & (d < step_size)
+                    if isec
+                        # Step to intersection
+                        pos = update_position(pos, dir, d)
+                        #@cuprintln("Thread: $thread, Block $block, photon: $i, Intersected, stepped to $(pos[1])")
+                        dist_travelled += d
+                        time += d / c_grp
+                    end
+            else
+                pos = update_position(pos, dir, step_size)
+                dist_travelled += step_size
+                time += step_size / c_grp
+                dir = update_direction(dir)
+            end
+
+            #@cuprintln("Thread: $thread, Block $block, photon: $i, isec: $isec")
+            if isec
+                stack_idx::Int64 = CUDA.atomic_add!(pointer(cache, 1), Int64(1))
+                # @cuprintln("Thread: $thread, Block $block writing to $stack_idx")                
+                CUDA.@cuassert stack_idx <= ix_offset + stack_len "Stack overflow"
+
+                out_positions[stack_idx] = pos
+                out_directions[stack_idx] = initial_dir
+                out_dist_travelled[stack_idx] = dist_travelled
+                out_wavelengths[stack_idx] = wavelength
+                out_times[stack_idx] = time
+                CUDA.atomic_xchg!(pointer(out_stack_pointers, block), stack_idx)
+                break
+            end
+        end
+
+        n_photons_simulated += 1
+
+    end
+
+    CUDA.atomic_add!(pointer(out_n_ph_simulated, 1), n_photons_simulated)
+    out_err_code[1] = 0
+
+    return nothing
+
+end
+
+
 
 
 function process_output(output::AbstractVector{T}, stack_pointers::AbstractVector{U}) where {T,U<:Integer,N}
-    out_size = size(output, 1)
-    stack_len = Int64(out_size / size(stack_pointers, 1))
+    out_size = length(output)
+    stack_len = Int64(out_size / length(stack_pointers))
 
-    stack_starts = collect(1:stack_len:out_size)
+    stack_starts = 1:stack_len:out_size
     out_sum = sum(stack_pointers .% stack_len)
 
     coalesced = Vector{T}(undef, out_sum)
@@ -518,15 +720,20 @@ function propagate_source(source::PhotonSource, distance, medium::MediumProperti
         return DataFrame(), n_ph_sim
     end
 
+    stack_idx = Vector(stack_idx)
 
-    dist_travelled = process_output(Vector(dist_travelled), Vector(stack_idx))
-    wavelengths = process_output(Vector(wavelengths), Vector(stack_idx))
-    directions = process_output(Vector(directions), Vector(stack_idx))
-    times = process_output(Vector(times), Vector(stack_idx))
+
+    dist_travelled = process_output(Vector(dist_travelled), stack_idx)
+    wavelengths = process_output(Vector(wavelengths), stack_idx)
+    directions = process_output(Vector(directions), stack_idx)
+    times = process_output(Vector(times), stack_idx)
 
     abs_length = get_absorption_length.(wavelengths, Ref(medium))
     abs_weight = convert(Vector{Float64}, exp.(-dist_travelled ./ abs_length))
 
+    area_acc = area_acceptance(target)
+    pmt_acc = p_one_pmt_acc.(wavelengths)
+    
     ref_ix = get_refractive_index.(wavelengths, Ref(medium))
     c_vac = ustrip(u"m/ns", SpeedOfLightInVacuum)
     # c_grp = get_group_velocity.(wavelengths, Ref(medium))
@@ -535,7 +742,7 @@ function propagate_source(source::PhotonSource, distance, medium::MediumProperti
     #photon_times = dist_travelled ./ c_grp
     
     tgeo = (distance - target_radius) ./ (c_vac / get_refractive_index(800.0f0, medium))
-    tres = (times .- tgeo .- source.time)
+    tres = (times .- tgeo)
 
     (DataFrame(
         tres=tres,
@@ -544,6 +751,9 @@ function propagate_source(source::PhotonSource, distance, medium::MediumProperti
         abs_weight=abs_weight,
         dist_travelled=dist_travelled,
         abs_length=abs_length,
+        area_acc=area_acc,
+        pmt_acc=pmt_acc,
+        total_weight = pmt_acc .* abs_weight .* area_acc,
         wavelength=wavelengths),
     n_ph_sim)
 end

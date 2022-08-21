@@ -3,7 +3,7 @@ using Unitful
 using Base: @kwdef
 using PhysicalConstants.CODATA2018
 
-using ..Utils
+using ...Utils
 
 export make_cascadia_medium_properties
 export salinity, pressure, temperature, vol_conc_small_part, vol_conc_large_part, radiation_length, density

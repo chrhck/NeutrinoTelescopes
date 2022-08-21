@@ -6,38 +6,17 @@ using Distributions
 using Roots
 using DSP
 using Interpolations
+using Base.Iterators
+import Base:@kwdef
+import StatsBase:mode as dist_mode
 
+using ..SPETemplates
 
 export PulseTemplate, PDFPulseTemplate, GumbelPulse, InterpolatedPulse
 export make_pulse_dist, evaluate_pulse_template, make_filtered_pulse
 export PulseSeries, evaluate_pulse_series
 export gumbel_width_from_fwhm
-"""
-Abstract type for pulse templates
-"""
-abstract type PulseTemplate{T<:Real} end
-
-"""
-Abstract type for pulse templates that use a PDF to define the pulse shape
-"""
-abstract type PDFPulseTemplate{T} <: PulseTemplate{T} end
-
-"""
-Pulse template using the gumbel-pdf to define its shape
-"""
-struct GumbelPulse{T} <: PDFPulseTemplate{T}
-    sigma::T
-    amplitude::T
-end
-
-
-"""
-Pulse template using an interpolation to define its shape
-"""
-struct InterpolatedPulse{T} <: PulseTemplate{T}
-    interp
-    amplitude::T
-end
+export get_template_mode
 
 
 """
@@ -66,12 +45,30 @@ gumbel_width_from_fwhm = fit_gumbel_fwhm_width()
 
 
 """
-    make_pulse_dist(p::PulseTemplate)
-
-Return a `Distribution`
+Abstract type for pulse templates
 """
-make_pulse_dist(::T) where {T<:PulseTemplate} = error("not implemented")
-make_pulse_dist(p::GumbelPulse{T}) where {T} = mu -> Gumbel(mu, p.sigma)
+abstract type PulseTemplate end
+
+get_template_mode(::PulseTemplate) = error("Not implemented")
+
+"""
+Abstract type for pulse templates that use a PDF to define the pulse shape
+"""
+@kwdef struct PDFPulseTemplate{U<:UnivariateDistribution} <: PulseTemplate
+    dist::U
+    amplitude::Float64
+end
+
+get_template_mode(p::PDFPulseTemplate) = dist_mode(p.dist)
+
+"""
+Pulse template using an interpolation to define its shape
+"""
+@kwdef struct InterpolatedPulse <: PulseTemplate
+    interp
+    amplitude::Float64
+end
+
 
 """
     evaluate_pulse_template(pulse_shape::PulseTemplate, pulse_time::T, timestamp::T)
@@ -79,36 +76,39 @@ make_pulse_dist(p::GumbelPulse{T}) where {T} = mu -> Gumbel(mu, p.sigma)
 Evaluate a pulse template `pulse_shape` placed at time `pulse_time` at time `timestamp`
 """
 evaluate_pulse_template(
-    pulse_shape::PulseTemplate{T},
-    pulse_time::T,
-    timestamp::T) where {T} = error("not implemented")
+    ::PulseTemplate,
+    ::Real,
+    ::Real) = error("not implemented")
 
 function evaluate_pulse_template(
-    pulse_shape::PDFPulseTemplate{T},
-    pulse_time::T,
-    timestamp::T) where {T}
+    pulse_shape::PDFPulseTemplate,
+    pulse_time::Real,
+    timestamp::Real)
 
-    dist = make_pulse_dist(pulse_shape)(pulse_time)
-    return pdf(dist, timestamp) * pulse_shape.amplitude
+    shifted_time = timestamp - pulse_time
+
+    return pdf(pulse_shape.dist, shifted_time) * pulse_shape.amplitude
 end
 
+
 function evaluate_pulse_template(
-    pulse_shape::InterpolatedPulse{T},
-    pulse_time::T,
-    timestamp::T) where {T}
+    pulse_shape::InterpolatedPulse,
+    pulse_time::Real,
+    timestamp::Real)
 
     shifted_time = timestamp - pulse_time
     return pulse_shape.interp(shifted_time) * pulse_shape.amplitude
-
 end
+
 
 function evaluate_pulse_template(
-    pulse_shape::PulseTemplate{T},
-    pulse_time::T,
-    timestamps::V) where {T,V<:AbstractVector{T}}
-
-    evaluate_pulse_template.(Ref(pulse_shape), Ref(pulse_time), timestamps)
+    pulse_shape::PulseTemplate,
+    pulse_time::Real,
+    timestamps::AbstractVector{<:Real})
+    return evaluate_pulse_template.(Ref(pulse_shape), Ref(pulse_time), timestamps)
 end
+
+
 
 """
     make_filteres_pulse(orig_pulse, sampling_frequency, eval_range, filter)
@@ -117,10 +117,10 @@ end
     `InterpolatedPulse`.
 """
 function make_filtered_pulse(
-    orig_pulse::PulseTemplate{T},
-    sampling_freq::T,
-    eval_range::Tuple{T,T},
-    filter) where {T}
+    orig_pulse::PulseTemplate,
+    sampling_freq::Real,
+    eval_range::Tuple{<:Real,<:Real},
+    filter) 
 
     timesteps = range(eval_range[1], eval_range[2], step=1 / sampling_freq)
     orig_eval = evaluate_pulse_template(orig_pulse, 0.0, timesteps)
@@ -130,20 +130,29 @@ function make_filtered_pulse(
     return InterpolatedPulse(interp_linear, 1.0)
 end
 
-struct PulseSeries{T<:Real,V<:AbstractVector{T}}
+struct PulseSeries{T<:Real, V<:AbstractVector{T}, U<:PulseTemplate}
     times::V
     charges::V
-    pulse_shape::PulseTemplate{T}
+    pulse_shape::U
 
     function PulseSeries(
         times::V,
         charges::V,
-        shape::PulseTemplate{T}) where {T<:Real,V<:AbstractVector{T}}
+        shape::U) where {T<:Real, V<: AbstractVector{T}, U<:PulseTemplate }
 
         ix = sortperm(times)
-        return new{T,V}(times[ix], charges[ix], shape)
+        return new{T, V, U}(times[ix], charges[ix], shape)
     end
 end
+
+function PulseSeries(times::AbstractVector{<:Real}, spe_template::SPEDistribution, pulse_shape::PulseTemplate)
+    spe_d = make_spe_dist(spe_template)
+    charges = rand(spe_d, length(times))
+    PulseSeries(times, charges, pulse_shape)
+end
+
+
+Base.length(ps::PulseSeries) = length(ps.times)
 
 function Base.:+(a::PulseSeries{T,V}, b::PulseSeries{T,V}) where {T<:Real,V<:AbstractVector{T}}
     # Could instead parametrize PulseSeries by PulseShape
@@ -154,23 +163,23 @@ function Base.:+(a::PulseSeries{T,V}, b::PulseSeries{T,V}) where {T<:Real,V<:Abs
 end
 
 
-function evaluate_pulse_series(time::T, wf::PulseSeries{T}) where {T<:Real}
-
-    evaluated_wf = T(0)
-
-    #for (ptime, pcharge) in zip(wf.times, wf.charges)	
-    for i in 1:size(wf.times, 1)
-        ptime = wf.times[i]
-        pcharge = wf.charges[i]
-
-        evaluated_wf += evaluate_pulse_template(wf.pulse_shape, ptime, time) * pcharge
-    end
-    evaluated_wf
-
+function evaluate_pulse_series(time::Real, ps::PulseSeries{<:Real}) 
+    sum(evaluate_pulse_template.(Ref(ps.pulse_shape), ps.times, Ref(time)) .* ps.charges)
 end
 
-function evaluate_pulse_series(times::V, wf::PulseSeries{T}) where {T<:Real,V<:AbstractVector{T}}
-    evaluate_pulse_series.(times, Ref(wf))
+function evaluate_pulse_series(times::AbstractVector{<:Real}, ps::PulseSeries{<:Real})
+
+    u = length(times)
+    v = length(ps)
+    
+    output = Matrix{eltype(times)}(undef, u, v)
+
+    @inbounds for (i, j) in product(eachindex(times), eachindex(ps.times))
+        output[i, j] = evaluate_pulse_template(ps.pulse_shape, ps.times[j], times[i]) * ps.charges[j]
+    end
+
+    return vec(sum(output, dims=2))
+
 end
 
 @recipe function f(::Type{T}, ps::T) where {T<:PulseSeries}

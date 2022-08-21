@@ -1,5 +1,6 @@
 module SPETemplates
 
+import Base: @kwdef
 using Distributions
 
 export SPEDistribution, ExponTruncNormalSPE
@@ -15,7 +16,7 @@ abstract type SPEDistribution{T<:Real} end
 """
 Mixture model of an exponential and a truncated normal distribution
 """
-struct ExponTruncNormalSPE{T<:Real}
+@kwdef struct ExponTruncNormalSPE{T<:Real} <: SPEDistribution{T}
     expon_rate::T
     norm_sigma::T
     norm_mu::T

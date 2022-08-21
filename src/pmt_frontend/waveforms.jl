@@ -6,51 +6,74 @@ using NonNegLeastSquares
 #using NNLS
 using DSP
 export Waveform
-export add_gaussian_white_noise, digitize_waveform, unfold_waveform, plot_waveform
+export add_gaussian_white_noise, digitize_waveform, unfold_waveform, plot_waveform, make_waveform
 
-struct Waveform{T<:Real,V<:AbstractVector{T}}
-    timestamps::V
+struct Waveform{T<:Real,U <: AbstractVector{T}, V<:AbstractVector{T}}
+    timestamps::U
     values::V
 end
 
 @recipe function f(wf::T) where {T<:Waveform}
-    x := wf.timestamps
-    y := wf.values
-    ()
+    wf.timestamps, wf.values
 end
+
 
 function add_gaussian_white_noise(values, scale)
     values .+ randn(size(values)) * scale
 end
 
 
+function make_waveform(ps::PulseSeries, sampling_freq::Real, noise_amp::Real; time_range=300)
+    
+    min_time = minimum(ps.times) - 50
+    max_time = min_time + time_range
+
+    dt = 1 / sampling_freq # ns
+    timestamps = range(min_time, max_time, step=dt)
+
+    waveform_values = evaluate_pulse_series(timestamps, ps)
+    if noise_amp > 0
+        waveform_values_noise = add_gaussian_white_noise(waveform_values, noise_amp)
+    else
+        waveform_values_noise = waveform_values
+    end
+
+    Waveform(timestamps, waveform_values_noise)
+end
+
+
 function digitize_waveform(
-    pulse_series::PulseSeries{T},
-    sampling_frequency::T,
-    digitizer_frequency::T,
-    noise_amp::T,
-    filter,
-    eval_range::Tuple{T,T},
-) where {T<:Real}
+    waveform::Waveform,
+    sampling_frequency::Real,
+    digitizer_frequency::Real,
+    filter; 
+)
 
-    dt = 1 / sampling_frequency # ns
-    timesteps = range(eval_range[1], eval_range[2], step=dt)
-
-    waveform_values = evaluate_pulse_series(timesteps, pulse_series)
-    waveform_values_noise = add_gaussian_white_noise(waveform_values, noise_amp)
-
-    waveform_filtered = filt(filter, waveform_values_noise)
+    min_time, max_time = extrema(waveform.timestamps)
+    waveform_filtered = filt(filter, waveform.values)
 
     resampling_rate = digitizer_frequency / sampling_frequency
-    new_interval = range(eval_range[1], eval_range[2], step=1 / digitizer_frequency)
+    new_interval = range(min_time, max_time, step=1 / digitizer_frequency)
     waveform_resampled = resample(waveform_filtered, resampling_rate)
 
     return Waveform(collect(new_interval), waveform_resampled)
 end
 
+function digitize_waveform(
+    ps::PulseSeries,
+    sampling_frequency::Real,
+    digitizer_frequency::Real,
+    noise_amp::Real,
+    filter; time_range=300
+)
+   wf = make_waveform(ps, sampling_frequency, noise_amp; time_range=time_range)
+   digitize_waveform(wf, sampling_frequency, digitizer_frequency, filter)
+end
+
+
 function make_nnls_matrix(
     pulse_times::V,
-    pulse_shape::PulseTemplate{T},
+    pulse_shape::PulseTemplate,
     timestamps::V) where {T<:Real,V<:AbstractVector{T}}
 
     nnls_matrix = zeros(T, size(timestamps, 1), size(pulse_times, 1))
@@ -71,7 +94,7 @@ end
 
 function apply_nnls(
     pulse_times::V,
-    pulse_shape::PulseTemplate{T},
+    pulse_shape::PulseTemplate,
     digi_wf::Waveform{T,V};
     alg::Symbol=:nnls) where {T<:Real,V<:AbstractVector{T}}
 
@@ -89,7 +112,7 @@ end
 
 function unfold_waveform(
     digi_wf::Waveform{T,V},
-    pulse_model::PulseTemplate{T},
+    pulse_model::PulseTemplate,
     pulse_resolution::T,
     min_charge::T,
     alg::Symbol=:nnls
@@ -101,22 +124,19 @@ function unfold_waveform(
 
     nonzero = pulse_charges .> min_charge
 
-    return pulse_times[nonzero], pulse_charges[nonzero]
+    return PulseSeries(pulse_times[nonzero], pulse_charges[nonzero], pulse_model)
 
 end
 
 function plot_waveform(
-    orig_waveform::Waveform{T,V},
-    digitized_waveform::Waveform{T,V},
-    pulse_times::V,
-    pulse_charges::V,
-    pulse_template::PulseTemplate{T},
-    reco_pulse_template::PulseTemplate{T},
-    ylim::Tuple{T,T}
-) where {T<:Real,V<:AbstractVector{T}}
-
-    reco_wf = PulseSeries(pulse_times, pulse_charges, reco_pulse_template)
-    reco_wf_uf = PulseSeries(pulse_times, pulse_charges, pulse_template)
+    orig_waveform::Waveform,
+    digitized_waveform::Waveform,
+    reco_pulses::PulseSeries,
+    pulse_template::PulseTemplate,
+    xlim::Tuple{<:Real,<:Real},
+    ylim::Tuple{<:Real,<:Real}
+)
+    pulses_orig_temp = PulseSeries(reco_pulses.times, reco_pulses.charges, pulse_template)
 
     p = plot(
         orig_waveform,
@@ -128,15 +148,16 @@ function plot_waveform(
         lw=2,
         palette=:seaborn_colorblind,
         dpi=150,
-        ylim=ylim
+        ylim=ylim,
+        xlim=xlim,
         #xlim=(-100, 100)
     )
-    p = plot!(digitized_waveform, label="Digitized Waveform", lw=2)
-    p = plot!(digitized_waveform.timestamps, reco_wf, label="Reconstructed Waveform", lw=2)
+    p = plot!(digitized_waveform, label="Digitized Waveform", lw=2, xlim=xlim)
+    p = plot!(reco_pulses, label="Reconstructed Waveform", lw=2, xlim=xlim)
 
-    p = plot!(orig_waveform.timestamps, reco_wf_uf, label="Unfolded Waveform", lw=2)
+    p = plot!(pulses_orig_temp, label="Unfolded Waveform", lw=2, xlim=xlim)
 
-    p = sticks!(twinx(), pulse_times, pulse_charges, legend=false, left_margin=30Plots.px, ylabel="Charge (PE)", ylim=(0, 10), color=:red, xticks=:none)
+    p = sticks!(twinx(), reco_pulses.times, reco_pulses.charges, legend=false, left_margin=30Plots.px, ylabel="Charge (PE)", xlim=xlim, ylim=(0, 50), color=:red, xticks=:none)
 
     p
 end

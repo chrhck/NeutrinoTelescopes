@@ -8,7 +8,7 @@ using Base.Iterators
 
 
 export PhotonTarget, DetectionSphere, p_one_pmt_acc
-export make_detector_cube, make_targets
+export make_detector_cube, make_targets, make_detector_hex
 export area_acceptance
 
 const PROJECT_ROOT = pkgdir(Detection)
@@ -60,8 +60,35 @@ function make_detector_cube(nx, ny, nz, spacing_vert::T, spacing_hor::T) where {
     end
 
     positions
-
 end
+
+
+function make_detector_hex(n_side::Integer, n_z::Integer, spacing_hor::Real, spacing_vert::Real, truncate::Integer=0)
+    positions = []
+
+    z_positions = range(0, n_z*spacing_vert; step=spacing_vert)
+
+    for irow in 0:(n_side - truncate)
+        i_this_row = 2 * (n_side - 1) - irow
+        x_pos = range(-(i_this_row - 1) / 2 * spacing_hor, (i_this_row - 1) / 2 * spacing_hor; length=i_this_row)
+        y = irow * spacing_hor * sqrt(3) / 2
+        for (x, z) in product(x_pos, z_positions)
+            push!(positions, SA[x, y, z])
+        end
+        if irow != 0
+            x_pos = range(-(i_this_row - 1) / 2 * spacing_hor, (i_this_row - 1) / 2 * spacing_hor; length=i_this_row)
+            y = -irow * spacing_hor * sqrt(3) / 2
+
+            for (x, z) in product(x_pos, z_positions)
+                push!(positions, SA[x, y, z])
+            end
+        end
+    end
+
+    positions
+end
+
+
 
 function make_targets(positions, n_pmts, pmt_area)
     map(pos -> DetectionSphere(pos, oftype(pmt_area, 0.21), n_pmts, pmt_area), positions)

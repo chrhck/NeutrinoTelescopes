@@ -30,7 +30,7 @@ model = data[:model] |> gpu
 
 output_trafos = [:log, :log, :neg_log_scale]
 
-distance = 150f0
+distance = 50f0
 n_pmts=16
 pmt_area=Float32((75e-3 / 2)^2*π)
 target_radius = 0.21f0
@@ -55,6 +55,7 @@ medium = make_cascadia_medium_properties(Float32)
 model_params, sources, mask, distances = evaluate_model(targets, particle, medium, 0.5f0, model, output_trafos)
 
 
+
 poissons = poisson_dist_per_module(model_params, sources, mask)
 shapes = shape_mixture_per_module(model_params, sources, mask, distances, medium)
 
@@ -62,66 +63,49 @@ event = sample_event(poissons, shapes, sources)
 
 histogram(event)
 
-#=function propagate_source(source, target)
-    results = ppcu.propagate_photons(source, target, medium, 512, 92, Int32(100000))
-    positions, directions, wavelengths, dist_travelled, times, stack_idx, n_ph_sim = results
-
-    n_ph_sim = Vector(n_ph_sim)[1]
-
-    dist_travelled = ppcu.process_output(Vector(dist_travelled), Vector(stack_idx))
-    wavelengths = ppcu.process_output(Vector(wavelengths), Vector(stack_idx))
-    directions = ppcu.process_output(Vector(directions), Vector(stack_idx))
-    times = ppcu.process_output(Vector(times), Vector(stack_idx))
-
-    abs_weight = convert(Vector{Float64}, exp.(-dist_travelled ./ get_absorption_length.(wavelengths, Ref(medium))))
-
-    ref_ix = get_refractive_index.(wavelengths, Ref(medium))
-    thetas = map(dir -> acos(dir[3]), directions)
-    #c_vac = ustrip(u"m/ns", SpeedOfLightInVacuum)
-    # c_grp = get_group_velocity.(wavelengths, Ref(medium))
-
-
-    #photon_times = dist_travelled ./ c_grp
-
-    #tgeo = (distance - target_radius) ./ (c_vac / get_refractive_index(800.0f0, medium))
-    #tres = (times .- tgeo)
-
-    pmt_acc_weight = p_one_pmt_acc.(wavelengths)
-
-    total_weight = abs_weight .* pmt_acc_weight
-
-    return DataFrame(:times => times, :total_weight => total_weight, :thetas=>thetas, :directions=>directions, :ref_ix=>ref_ix)
-end
-=#
-
 prop_source_ext = ExtendedCherenkovEmitter(particle, medium, (300f0, 800f0))
-prop_source_iso = PointlikeIsotropicEmitter(particle.position, particle.time, prop_source_ext.photons, CherenkovSpectrum((300f0, 800f0), 20, medium))
 prop_source_che = PointlikeCherenkovEmitter(particle, medium, (300f0, 800f0))
 
+single_source = CherenkovSegment(prop_source_che.position, prop_source_che.direction, prop_source_che.time, Float32(prop_source_che.photons))
 
-results_iso = ppcu.propagate_source(prop_source_iso, distance, medium)
-results_che = ppcu.propagate_source(prop_source_che, distance, medium)
-results_ext = ppcu.propagate_source(prop_source_ext, distance, medium)
-
-dir_weight =  get_dir_reweight.(results_iso[:, :directions], Ref(prop_source_che.direction), results_iso[:, :ref_ix])
-
-
-histogram(results_che[1][:, :tres], bins=-10:200)
+model_params_single = source_to_input(single_source, target)
+model_pred = cpu(model(gpu(reshape(collect(model_params_single), (2, 1)))))
+transform_model_output!(model_pred, output_trafos)
+model_pred = reshape(model_pred, (3, 1, 1))
 
 
-scatter(cos.(results_iso[1:500000, :thetas]), dir_weight[1:500000], alpha=1)
-
-histogram(cos.(results_che[:, :thetas]), weights=results_che[:, :total_weight], bins=-0:0.01:1, yscale=:log10, normalize=true)
-histogram!(cos.(results_iso[:, :thetas]), weights=results_iso[:, :total_weight].* dir_weight, bins=-0:0.01:1, yscale=:log10, normalize=true)
-
-histogram(results_che[:, :times], weights=results_che[:, :total_weight], bins=220:260, normalize=true)
-histogram!(results_iso[:, :times], weights=results_iso[:, :total_weight] .* dir_weight, bins=220:260, normalize=true)
-
-histogram(event[1], bins=200:5:400)
-histogram!(results_ext[:, :times], weights=results_ext[:, :total_weight],  bins=200:5:400)
+shape_single = shape_mixture_per_module(model_pred, [single_source] , reshape([true], (1, 1)), reshape([distance], (1, 1)), medium)
+poisson_single = poisson_dist_per_module(model_pred, [single_source],  reshape([true], (1, 1)))
 
 
+shape_single
 
+event_single = sample_event(poisson_single, shape_single, [single_source])
+
+
+results_che, nph_sim_che = ppcu.propagate_source(prop_source_che, distance, medium)
+results_ext, nph_sim_ext = ppcu.propagate_source(prop_source_ext, distance, medium)
+
+results_che[!, :pmt_acc_weight] = p_one_pmt_acc.(results_che[:, :wavelength])
+results_che[!, :total_weight] = results_che[:, :abs_weight] .* results_che[!, :pmt_acc_weight]
+
+
+c_vac = ustrip(u"m/ns", SpeedOfLightInVacuum)
+tgeo = (distance - target_radius) ./ (c_vac / get_refractive_index(800.0f0, medium))
+tres = (event_single[1] .- tgeo .- prop_source_ext.time)
+
+histogram(tres, bins=-50:1:50, alpha=0.7)
+histogram!(results_che[:, :tres], weights=results_che[:, :total_weight],  bins=-50:1:50, alpha=0.7)
+
+histogram(results_che[:, :tres], weights=results_che[:, :total_weight],  bins=0:1:100, yscale=:log10)
+
+
+scatter(results_che[1:1000, :tres], results_che[1:1000, :pmt_acc_weight], xlim=(0, 100))
+
+
+typeof(results_ext)
+
+results_ext
 
 
 @show cos(results_iso[1, :directions][3] - dot(src_targ, prop_source.direction))

@@ -6,7 +6,7 @@ export get_longitudinal_params
 export MediumPropertiesWater, MediumPropertiesIce
 export CherenkovTrackLengthParameters, CherenkovTrackLengthParametersEMinus, CherenkovTrackLengthParametersEPlus, CherenkovTrackLengthParametersGamma
 export longitudinal_profile, cherenkov_track_length, cherenkov_counts, fractional_contrib_long
-export particle_to_lightsource, particle_to_elongated_lightsource, particle_to_elongated_lightsource!, CherenkovSegment
+export particle_to_lightsource, particle_to_elongated_lightsource, particle_to_elongated_lightsource!
 export total_lightyield
 
 using Parameters: @with_kw
@@ -17,10 +17,12 @@ using Sobol
 using Zygote
 using PhysicalConstants.CODATA2018
 using Unitful
+using PoissonRandom
 using ..Spectral
 using ..Medium
-using ..Utils
-using ..Types
+using ...Utils
+using ...Types
+using ..Emission
 
 c_vac_m_p_ns = ustrip(u"m/ns", SpeedOfLightInVacuum)
 
@@ -280,20 +282,12 @@ function particle_to_lightsource(
 
 end
 
-
-struct CherenkovSegment{T}
-    position::SVector{3,T}
-    direction::SVector{3,T}
-    time::T
-    photons::T
-end
-
 function particle_to_elongated_lightsource!(
     particle::Particle{T},
     int_grid::AbstractArray{T},
     medium::MediumProperties,
     wl_range::Tuple{T,T},
-    output::Union{Zygote.Buffer,AbstractVector{CherenkovSegment{T}}},
+    output::Union{Zygote.Buffer,AbstractVector{PointlikeCherenkovEmitter{T, 20}}},
 ) where {T<:Real}
 
 
@@ -303,6 +297,8 @@ function particle_to_elongated_lightsource!(
     n_steps = Int64(ceil(ustrip(Unitful.NoUnits, (range[2] - range[1]) / precision)))
     int_grid = sort!(vec(reduce(hcat, next!(s) for i in 1:n_steps)))u"cm"
     """
+
+    spectrum = CherenkovSpectrum(wl_range, 20, medium)
 
     n_steps = length(int_grid)
 
@@ -328,13 +324,14 @@ function particle_to_elongated_lightsource!(
         this_pos = particle.position .+ step_along[i-1] .* particle.direction
         this_time = particle.time + step_along[i-1] / T(c_vac_m_p_ns)
 
-        this_nph = T(total_contrib * fractional_contrib[i])
+        this_nph = pois_rand(total_contrib * fractional_contrib[i])
 
-        this_src = CherenkovSegment(
+        this_src = PointlikeCherenkovEmitter(
             this_pos,
             particle.direction,
             this_time,
-            this_nph)
+            this_nph,
+            spectrum)
 
         output[i-1] = this_src
     end
@@ -352,7 +349,7 @@ function particle_to_elongated_lightsource(
 
     int_grid = range(len_range[1], len_range[2], step=precision)
     n_steps = size(int_grid, 1)
-    output = Vector{CherenkovSegment{T}}(undef, n_steps - 1)
+    output = Vector{PointlikeCherenkovEmitter{T, 20}}(undef, n_steps - 1)
     particle_to_elongated_lightsource!(particle, int_grid, medium, wl_range, output)
 end
 
