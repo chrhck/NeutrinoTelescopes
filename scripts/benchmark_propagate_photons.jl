@@ -1,9 +1,4 @@
-using NeutrinoTelescopes.PhotonPropagationCuda
-using NeutrinoTelescopes.Medium
-using NeutrinoTelescopes.Types
-using NeutrinoTelescopes.Emission
-using NeutrinoTelescopes.Spectral
-using NeutrinoTelescopes.Detection
+using NeutrinoTelescopes
 using Logging
 using BenchmarkTools
 using BenchmarkPlots, StatsPlots
@@ -13,7 +8,7 @@ using StaticArrays
 #global_logger(debuglogger)
 
 distance = 80f0
-medium = Medium.make_cascadia_medium_properties(Float32)
+medium = make_cascadia_medium_properties(Float32)
 source = PointlikeIsotropicEmitter(SA[0f0, 0f0, 0f0], 0f0, Int64(1E8), CherenkovSpectrum((300f0, 800f0), 50, medium))
 n_pmts=16
 pmt_area=Float32((75e-3 / 2)^2*π)

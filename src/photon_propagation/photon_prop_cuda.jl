@@ -237,14 +237,14 @@ end
     return @SVector[CUDA.fma(step_size, dir[j], pos[j]) for j in 1:3]
 end
 
-@inline function check_intersection(pos::SVector{3,T}, dir::SVector{3,T}, target_pos::SVector{3,T}, target_r::T)
+@inline function check_intersection(pos::SVector{3,T}, dir::SVector{3,T}, target_pos::SVector{3,T}, target_rsq::T, step_size::T) where {T<:Real}
 
     dpos = pos .- target_pos
     
     a::T = dot(dir, dpos)
     pp_norm_sq::T = sum(dpos .^ 2)
 
-    b = CUDA.fma(a, a, -pp_norm_sq + target_r*target_r)
+    b = CUDA.fma(a, a, -pp_norm_sq + target_rsq)
     #b::Float32 = a^2 - (pp_norm_sq - target.radius^2)
 
     isec = b >= 0
@@ -300,7 +300,7 @@ function cuda_propagate_photons!(
 
     medium::MediumProperties{T} = MediumProp
 
-    target_rsq = target_r^2
+    target_rsq::T = target_r^2
     # stack_len is stack_len per block
 
     ix_offset::Int64 = (block - 1) * (stack_len) + 1
@@ -340,7 +340,7 @@ function cuda_propagate_photons!(
 
             # Check intersection with module
 
-            isec, d = check_intersection(pos, dir, target_pos, target_r)
+            isec, d = check_intersection(pos, dir, target_pos, target_rsq, step_size)
 
             if !isec
                 pos = update_position(pos, dir, step_size)
@@ -366,6 +366,7 @@ function cuda_propagate_photons!(
             out_times[stack_idx] = time
             CUDA.atomic_xchg!(pointer(out_stack_pointers, block), stack_idx)
             break
+        end
             
 
             #=
@@ -440,7 +441,7 @@ end
 end
 
 
-#= IGNORE MODULE SHADOWING =#
+#= IGNORE MODULE SHADOWING
 function cuda_propagate_multi_target!(
     #= out_positions::CuDeviceVector{SVector{3,T}},
     out_directions::CuDeviceVector{SVector{3,T}},
@@ -630,11 +631,11 @@ function cuda_propagate_multi_target!(
 
     CUDA.atomic_add!(pointer(out_n_ph_simulated, 1), n_photons_simulated)
     out_err_code[1] = 0
-    =#
+    
     return nothing
 
 end
-
+=#
 
 
 

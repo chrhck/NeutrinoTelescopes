@@ -9,14 +9,20 @@ using DSP
 using Profile
 using DataFrames
 using BenchmarkTools
+using StatsPlots
 
 
-
-STD_PMT_CONFIG
 spe_d = make_spe_dist(STD_PMT_CONFIG.spe_template)
-
 plot(x -> pdf(spe_d, x), 0, 5, ylabel="PDF", xlabel="Charge (PE)",
     title="SPE Template")
+
+gumb = truncated(Gumbel(0, gumbel_width_from_fwhm(5.0))+4, 0, 20)
+plot(gumb, -5:0.01:20)
+
+xs = -5:0.01:10
+dfdx = diff(pdf.(Ref(gumb), xs)) ./ diff(xs)
+
+plot(xs[1:end-1], dfdx)
 
 plot(x -> evaluate_pulse_template(STD_PMT_CONFIG.pulse_model, 0.0, x), -50, 50, ylabel="Amplitude (a.u.)", xlabel="Time (ns)")
 
@@ -50,11 +56,22 @@ prop_source_che = PointlikeCherenkovEmitter(particle, medium, (300f0, 800f0))
 results_che, nph_sim_che = propagate_source(prop_source_che, distance, medium)
 results_ext, nph_sim_ext = propagate_source(prop_source_ext, distance, medium)
 
+reco_pulses = make_reco_pulses(results_che)
+plot(reco_pulses, xlim=(-50, 200))
+
+reco_pulses = make_reco_pulses(results_ext)
+plot!(reco_pulses, xlim=(-50, 200))
+
+
 hit_times = resample_simulation(results_che)
-histogram(hit_times, bins=-20:100)
+histogram(hit_times, bins=-20:5:100, alpha=0.7)
+
+
+
+
 
 hit_times = resample_simulation(results_ext)
-histogram!(hit_times, bins=-20:100)
+histogram!(hit_times, bins=-20:5:100, alpha=0.7)
 
 #wf_model = make_gumbel_waveform_model(hit_times)
 ps = PulseSeries(hit_times, STD_PMT_CONFIG.spe_template, STD_PMT_CONFIG.pulse_model)

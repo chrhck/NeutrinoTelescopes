@@ -8,7 +8,6 @@ using DSP
 using Interpolations
 using Base.Iterators
 import Base:@kwdef
-import StatsBase:mode as dist_mode
 
 using ..SPETemplates
 
@@ -59,7 +58,8 @@ Abstract type for pulse templates that use a PDF to define the pulse shape
     amplitude::Float64
 end
 
-get_template_mode(p::PDFPulseTemplate) = dist_mode(p.dist)
+get_template_mode(p::PDFPulseTemplate) = mode(p.dist)
+get_template_mode(p::PDFPulseTemplate{<: Distributions.Truncated}) = mode(p.dist.untruncated)
 
 """
 Pulse template using an interpolation to define its shape
