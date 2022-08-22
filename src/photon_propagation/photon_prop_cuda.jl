@@ -13,6 +13,7 @@ using Logging
 
 
 export cuda_propagate_photons!, initialize_photon_arrays, process_output
+export cuda_propagate_multi_target!
 export cherenkov_ang_dist, cherenkov_ang_dist_int
 export propagate_source
 export fit_photon_dist, make_photon_fits
@@ -21,7 +22,6 @@ using ...Utils
 using ...Types
 using ..Medium
 using ..Spectral
-using ..Emission
 using ..Detection
 using ..LightYield
 
@@ -237,6 +237,35 @@ end
     return @SVector[CUDA.fma(step_size, dir[j], pos[j]) for j in 1:3]
 end
 
+@inline function check_intersection(pos::SVector{3,T}, dir::SVector{3,T}, target_pos::SVector{3,T}, target_r::T)
+
+    dpos = pos .- target_pos
+    
+    a::T = dot(dir, dpos)
+    pp_norm_sq::T = sum(dpos .^ 2)
+
+    b = CUDA.fma(a, a, -pp_norm_sq + target_r*target_r)
+    #b::Float32 = a^2 - (pp_norm_sq - target.radius^2)
+
+    isec = b >= 0
+
+    if !isec
+        return false, NaN32
+    end
+
+    # Uncommon branch
+    # Distance of of the intersection point along the line
+    d = -a - sqrt(b)
+
+    if (d > 0) & (d < step_size)
+        return true, d
+    else
+        return false, NaN32
+    end
+
+end
+
+
 
 function cuda_propagate_photons!(
     out_positions::CuDeviceVector{SVector{3,T}},
@@ -311,6 +340,35 @@ function cuda_propagate_photons!(
 
             # Check intersection with module
 
+            isec, d = check_intersection(pos, dir, target_pos, target_r)
+
+            if !isec
+                pos = update_position(pos, dir, step_size)
+                dist_travelled += step_size
+                time += step_size / c_grp
+                dir = update_direction(dir)
+                continue
+            end
+
+            # Intersected
+            pos = update_position(pos, dir, d)
+            dist_travelled += d
+            time += d / c_grp
+
+            stack_idx::Int64 = CUDA.atomic_add!(pointer(cache, 1), Int64(1))
+            # @cuprintln("Thread: $thread, Block $block writing to $stack_idx")                
+            CUDA.@cuassert stack_idx <= ix_offset + stack_len "Stack overflow"
+
+            out_positions[stack_idx] = pos
+            out_directions[stack_idx] = initial_dir
+            out_dist_travelled[stack_idx] = dist_travelled
+            out_wavelengths[stack_idx] = wavelength
+            out_times[stack_idx] = time
+            CUDA.atomic_xchg!(pointer(out_stack_pointers, block), stack_idx)
+            break
+            
+
+            #=
             # a = dot(dir, (pos - target.position))
             # pp_norm_sq = norm(pos - target_pos)^2
 
@@ -348,7 +406,7 @@ function cuda_propagate_photons!(
                 time += step_size / c_grp
                 dir = update_direction(dir)
             end
-
+            
             #@cuprintln("Thread: $thread, Block $block, photon: $i, isec: $isec")
             if isec
                 stack_idx::Int64 = CUDA.atomic_add!(pointer(cache, 1), Int64(1))
@@ -364,6 +422,7 @@ function cuda_propagate_photons!(
                 break
             end
         end
+        =#
 
         n_photons_simulated += 1
 
@@ -380,9 +439,10 @@ end
     return (l < val) && (u > val)
 end
 
+
 #= IGNORE MODULE SHADOWING =#
 function cuda_propagate_multi_target!(
-    out_positions::CuDeviceVector{SVector{3,T}},
+    #= out_positions::CuDeviceVector{SVector{3,T}},
     out_directions::CuDeviceVector{SVector{3,T}},
     out_wavelengths::CuDeviceVector{T},
     out_dist_travelled::CuDeviceVector{T},
@@ -391,14 +451,15 @@ function cuda_propagate_multi_target!(
     out_n_ph_simulated::CuDeviceVector{Int64},
     out_err_code::CuDeviceVector{Int32},
     stack_len::Int32,
-    seed::Int64,
-    source::U,
-    spectrum_texture::CuDeviceTexture{T, 1},
+     =#seed::Int64,
+    # source::U,
+    # spectrum_texture::CuDeviceTexture{T, 1},
     target_x::CuDeviceVector{T},
     target_y::CuDeviceVector{T},
     target_z::CuDeviceVector{T},
-    target_r::T,
-    ::Val{MediumProp}) where {T, U <: PhotonSource{T}, MediumProp}
+    targets_per_block::Int64,
+    # target_r::T,
+    ::Val{MediumProp}) where {T, MediumProp} #{T, U <: PhotonSource{T}, MediumProp}
 
     block = blockIdx().x
     thread = threadIdx().x
@@ -412,24 +473,24 @@ function cuda_propagate_multi_target!(
     Random.seed!(seed + global_thread_index)
 
     n_targets = length(target_x)
-    targets_per_block::Int32 = cld(n_targets, griddim)
     
     @cuassert targets_per_block * griddim == n_targets
 
-    positions_x = @cuStaticSharedMem(T, targets_per_block)
-    positions_y = @cuStaticSharedMem(T, targets_per_block)
-    positions_z = @cuStaticSharedMem(T, targets_per_block)
-
-    for i in range((block-1)*blockdim+(thread-1), blockdim*griddim, n_targets)
-        positions_x[i % targets_per_block + 1] = target_x[i]
+    
+    positions_x = @cuDynamicSharedMem(T, targets_per_block, sizeof(Int64))    
+    positions_y = @cuDynamicSharedMem(T, targets_per_block, sizeof(Int64) + sizeof(T)*targets_per_block)
+    positions_z = @cuDynamicSharedMem(T, targets_per_block, sizeof(Int64) + 2*sizeof(T)*targets_per_block)
+    
+    @inbounds for i in thread:blockdim:targets_per_block
+        positions_x[i] = target_x[(block-1)*targets_per_block+i]
     end
 
-    for i in range((block-1)*blockdim+(thread-1), blockdim*griddim, n_targets)
-        positions_y[i % targets_per_block + 1] = target_y[i]
+    @inbounds for i in thread:blockdim:targets_per_block
+        positions_y[i] = target_y[(block-1)*targets_per_block+i]
     end
 
-    for i in range((block-1)*blockdim+(thread-1), blockdim*griddim, n_targets)
-        positions_z[i % targets_per_block + 1] = target_z[i]
+    @inbounds for i in thread:blockdim:targets_per_block
+        positions_z[i] = target_z[(block-1)*targets_per_block+i]
     end
 
     this_n_photons::Int64 = cld(source.photons, blockdim)
@@ -437,14 +498,12 @@ function cuda_propagate_multi_target!(
     medium::MediumProperties{T} = MediumProp
 
     target_rsq = target_r^2
-    # stack_len is stack_len per block
-
+    
     ix_offset::Int64 = (block - 1) * (stack_len) + 1
     @inbounds cache[1] = ix_offset
 
     safe_margin = max(0, (blockdim - warpsize))
     n_photons_simulated = Int64(0)
-
 
     @inbounds for i in 1:this_n_photons
 
@@ -571,7 +630,7 @@ function cuda_propagate_multi_target!(
 
     CUDA.atomic_add!(pointer(out_n_ph_simulated, 1), n_photons_simulated)
     out_err_code[1] = 0
-
+    =#
     return nothing
 
 end

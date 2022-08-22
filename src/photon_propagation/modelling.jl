@@ -27,7 +27,6 @@ using TensorBoardLogger: TBLogger, tb_increment, set_step!, set_step_increment!
 
 using ...Types
 using ...Utils
-using ..Emission
 using ..Detection
 using ..Medium
 using ..PhotonPropagationCuda
@@ -357,7 +356,7 @@ function train_mlp(; kws...)
     return model, train_data, test_data, trafos
 end
 
-function source_to_input(source::CherenkovSegment, target::PhotonTarget)
+function source_to_input(source::PointlikeCherenkovEmitter, target::PhotonTarget)
     em_rec_vec = target.position .- source.position
     distance = norm(em_rec_vec)
     em_rec_vec = em_rec_vec ./ distance
@@ -367,7 +366,7 @@ function source_to_input(source::CherenkovSegment, target::PhotonTarget)
 
 end
 
-function source_to_input(sources::AbstractVector{<:CherenkovSegment}, targets::AbstractVector{<:PhotonTarget})
+function source_to_input(sources::AbstractVector{<:PointlikeCherenkovEmitter}, targets::AbstractVector{<:PhotonTarget})
 
     total_size = size(sources, 1) * size(targets, 1)
 
@@ -391,15 +390,15 @@ end
 
 function evaluate_model(
     targets::AbstractVector{U},
-    particle::LightYield.Particle,
-    medium::Medium.MediumProperties,
+    particle::Particle,
+    medium::MediumProperties,
     precision::T,
     model::Flux.Chain,
     trafos::AbstractVector{Symbol},
     max_dist::Number = 300
 ) where {U<:Detection.PhotonTarget,T<:Real}
 
-    sources = LightYield.particle_to_elongated_lightsource(
+    sources = particle_to_elongated_lightsource(
         particle,
         (T(0.0), T(20.0)),
         precision,
@@ -441,7 +440,7 @@ function shape_mixture_per_module(
     mask::AbstractMatrix{Bool},
     distances::AbstractArray{U,2},
     medium::MediumProperties
-) where {U<:Real,V<:LightYield.CherenkovSegment}
+) where {U<:Real,V<:PointlikeCherenkovEmitter}
 
     n_sources = size(params, 2)
     n_targets = size(params, 3)
@@ -473,11 +472,11 @@ end
 
 function shape_mixture_per_module(
     targets::AbstractVector{U},
-    particle::LightYield.Particle,
-    medium::Medium.MediumProperties,
+    particle::Particle,
+    medium::MediumProperties,
     precision::Real,
     model::Flux.Chain,
-    trafos::AbstractVector{Symbol}) where {U<:Detection.PhotonTarget}
+    trafos::AbstractVector{Symbol}) where {U<:PhotonTarget}
 
     predictions, sources, mask = evaluate_model(targets, particle, medium, precision, model, trafos)
     shape_mixture_per_module(predictions, sources, mask)
@@ -487,7 +486,7 @@ end
 function poisson_dist_per_module(
     params::AbstractArray{U,3},
     sources::AbstractVector{V},
-    mask::AbstractMatrix{Bool}) where {U<:Real,V<:CherenkovSegment}
+    mask::AbstractMatrix{Bool}) where {U<:Real,V<:PointlikeCherenkovEmitter}
 
     n_sources = size(params, 2)
     n_targets = size(params, 3)
@@ -519,7 +518,7 @@ end
 function sample_event(
     poissons::AbstractVector{U},
     shapes::AbstractVector{V},
-    sources::AbstractVector{W}) where {U<:Sampleable,V<:Sampleable,W<:CherenkovSegment}
+    sources::AbstractVector{W}) where {U<:Sampleable,V<:Sampleable,W<:PointlikeCherenkovEmitter}
 
     if size(poissons) != size(shapes) != size(sources)
         error("Vectors have to be of same size")
