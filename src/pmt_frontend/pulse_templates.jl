@@ -182,7 +182,10 @@ function evaluate_pulse_series(times::AbstractVector{<:Real}, ps::PulseSeries{<:
 
 end
 
+(p::PulseSeries)(times) = evaluate_pulse_series(times, p)
+
 @recipe function f(::Type{T}, ps::T) where {T<:PulseSeries}
+    xlim := (ps.times[1]-10, ps.times[end]+10)
     xi -> evaluate_pulse_series(xi, ps)
 end
 

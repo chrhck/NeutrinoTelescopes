@@ -47,9 +47,9 @@ STD_PMT_CONFIG = PMTConfig(
     ExponTruncNormalSPE(expon_rate=1.0, norm_sigma=0.3, norm_mu=1.0, trunc_low=0.0, peak_to_valley=3.1),
     PDFPulseTemplate(
         dist=truncated(Gumbel(0, gumbel_width_from_fwhm(5.0))+4, 0, 20),
-        amplitude=ustrip(u"A", 5E6 * ElementaryCharge / 20u"ns")
+        amplitude=1. #ustrip(u"A", 5E6 * ElementaryCharge / 20u"ns")
     ),
-    10,
+    20,
     2.0,
     0.1,
     0.25,

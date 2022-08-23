@@ -22,6 +22,24 @@ struct DetectionSphere{T<:Real} <: PhotonTarget{T}
     pmt_area::T
 end
 
+
+struct SimpleMultiPMTDetector{T<:Real, N<:Integer} <: PhotonTarget{T}
+    position::SVector{3,T}
+    radius::T
+    pmt_area::T
+    pmt_coordinates::SVector{N, Tuple{T, T}}
+end
+
+function make_pom_pmt_coordinates()
+
+    θ = [fill(deg2rad(90 - 57.5), 4) fill(deg2rad(90 + 57.5), 4) fill(deg2rad(90 - 25), 4) fill(deg2rad(90 + 25), 4)]
+    ϕ = [deg2rad.(range(45; step=90, length=4)) deg2rad.(range(45; step=90, length=4)) deg2rad.(range(0; step=90, length=4)) deg2rad.(range(0; step=90, length=4))]
+    return SA[tp for tp in zip(θ, ϕ)]
+end
+
+
+
+
 function area_acceptance(target::DetectionSphere)
     total_pmt_area = target.n_pmts * target.pmt_area
     detector_surface = 4*π * target.radius^2

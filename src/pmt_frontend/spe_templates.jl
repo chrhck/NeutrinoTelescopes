@@ -40,7 +40,7 @@ make_spe_dist(d::SPEDistribution{T}) where {T} = error("not implemented")
 function make_spe_dist(d::ExponTruncNormalSPE{T}) where {T<:Real}
 
     norm = Normal(d.norm_mu, d.norm_sigma)
-    tnorm = truncated(norm, lower=d.trunc_low)
+    tnorm = truncated(norm, d.trunc_low, Inf)
 
     expon = Exponential(d.expon_rate)
     dist = MixtureModel([expon, tnorm], [d.expon_weight, 1 - d.expon_weight])
