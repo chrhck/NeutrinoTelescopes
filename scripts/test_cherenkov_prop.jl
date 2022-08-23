@@ -6,6 +6,7 @@ using BSON
 using Flux
 using StaticArrays
 using DataFrames
+using StatsPlots
 
 
 distance = 50f0
@@ -33,10 +34,11 @@ medium = make_cascadia_medium_properties(Float32)
 
 prop_source_ext = ExtendedCherenkovEmitter(particle, medium, (300f0, 800f0))
 
-particle_to_elongated_lightsource(particle, (0f0, 20f0), 0.5f0, medium, (300f0, 800f0))
+pl_sources = particle_to_elongated_lightsource(particle, (0f0, 20f0), 1f0, medium, (300f0, 800f0))
 
-
-prop_source_che = PointlikeCherenkovEmitter(particle, medium, (300f0, 800f0))
-
-results_che, nph_sim_che = propagate_source(prop_source_che, distance, medium)
 results_ext, nph_sim_ext = propagate_source(prop_source_ext, distance, medium)
+
+results_che_ext = vcat([propagate_source(src, distance, medium)[1] for src in pl_sources]...)
+
+@df results_che_ext histogram(:tres, bins=-50:10, weights=:total_weight)
+@df results_ext histogram!(:tres, bins=-50:100,  weights=:total_weight)

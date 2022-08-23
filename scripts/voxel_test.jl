@@ -244,3 +244,27 @@ traverse_grid(position, direction, grid, dgrid)
 
 
 is_filled
+
+threads = 592
+blocks = 96
+
+nthreads = threads*blocks
+
+targets_per_block = cld(length(positions), 96)
+
+dummies = targets_per_block * 96 - length(positions)
+
+(length(positions)+dummies) // 96 == ((length(positions)+dummies) / 96)
+
+
+
+
+
+length(positions) * repeats
+
+diffe = length(positions) * repeats - nthreads
+
+
+
+
+tidx = 7542 % length(positions)
