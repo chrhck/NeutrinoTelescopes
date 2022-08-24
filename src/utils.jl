@@ -7,7 +7,7 @@ using Distributions
 
 export fast_linear_interp, transform_integral_range
 export integrate_gauss_quad
-export sph_to_cart, rodrigues_rotation
+export sph_to_cart, apply_rot, cart_to_sph, rot_ez_fast
 export CategoricalSetDistribution
 export sample_cherenkov_track_direction
 export rand_gamma
@@ -112,6 +112,18 @@ function sph_to_cart(theta::Real, phi::Real)
     return SA[x, y, z]
 end
 
+
+function cart_to_sph(x::Real, y::Real, z::Real)
+    theta = acos(z)
+    phi = acos(x / sin(theta))
+
+    return theta, phi
+end
+
+cart_to_sph(x::SVector{3, <:Real}) = cart_to_sph(x[1], x[2], x[3])
+
+
+
 """
 CategoricalSetDistribution{T, U<:Real}
 
@@ -142,23 +154,59 @@ end
 
 Base.rand(pdist::CategoricalSetDistribution) = pdist.set[rand(pdist.cat)]
 
-"""
-    rodrigues_rotation(a, b, operand)
 
-Rodrigues rotation formula. Calculates rotation axis and angle given by rotation a to b.
+ssc(v::AbstractVector) = [0 -v[3] v[2]; v[3] 0 -v[1]; -v[2] v[1] 0]
+
+"""
+    apply_rot(a, b, operand)
+
+Calculates rotation matrix obtained by rotating a to b. Apply to operand.
 Apply the resulting rotation to operand.
 """
-function rodrigues_rotation(a, b, operand)
+function apply_rot(a, b, operand)
     # Rotate a to b and apply to operand
     if a == b
         return operand
     end
-    ax = cross(a, b)
-    axnorm = norm(ax)
-    ax = ax ./ axnorm
-    theta = asin(axnorm)
-    rotated = operand .* cos(theta) + (cross(ax, operand) .* sin(theta)) + (ax .* (1 - cos(theta)) .* dot(ax, operand))
-    return rotated
+
+    cross_ab = cross(a, b)
+    ssc_cross_ab = ssc(cross_ab)
+
+    R = I + ssc_cross_ab + ssc_cross_ab^2 * (1-dot(a, b)) / norm(cross_ab)^2
+    res = R * operand
+    return res ./ norm(res)
+end
+
+
+@inline function rot_ez_fast(a::SVector{3, T}, operand::SVector{3, T}) where {T<:Real}
+
+    if abs(a[3]) == T(1)
+        return @SVector[operand[1], copysign(operand[2], a[3]), copysign(operand[3], a[3])]
+    end
+
+    #=
+    cross_ab = [a[2] -a[1] 0]
+    norm_cross_ab_sq = a[2]^2 + a[1]^2
+    ssc_ab = [0 0 -a[1]; 0 0 -a[2]; a[1] a[2] 0 ]
+    ssc_ab_sq = [-a[1]^2 -a[1]*a[2] 0; -a[1]*a[2] -a[2]^2 0; 0 0 -a[1]^2 -a[2]^2]
+     R = [1-a1sq*fact  -a[1]*a[2]*fact -a[1] ;
+        -a[1]*a[2]*fact 1-fact*a2sq   -a[2] ;
+         a[1]           a[2]             a[3]]
+    =#
+    a1sq = a[1]^2
+    a2sq = a[2]^2
+    fact = (1-a[3]) / (a2sq + a1sq)
+    a1a2 = a[1] * a[2]
+
+    x = fma(-a1sq, fact, 1) * operand[1] -a1a2*fact*operand[2]  -a[1]*operand[3]
+    y = -a1a2*fact*operand[1] + fma(-a2sq, fact, 1) * operand[2] -a[2]*operand[3]
+    z = a[1] * operand[1] + a[2] * operand[2] + a[3]*operand[3]
+    return SA[x, y, z]
+emd
+    
+
+
+
 end
 
 

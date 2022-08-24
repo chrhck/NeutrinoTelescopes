@@ -4,10 +4,14 @@ using CSV
 using DataFrames
 using Interpolations
 using Unitful
+using LinearAlgebra
 using Base.Iterators
 
+using ...Utils
 
-export PhotonTarget, DetectionSphere, p_one_pmt_acc
+
+export PhotonTarget, DetectionSphere, p_one_pmt_acc, MultiPMTDetector, make_pom_pmt_coordinates
+export check_pmt_hit
 export make_detector_cube, make_targets, make_detector_hex
 export area_acceptance
 
@@ -23,18 +27,55 @@ struct DetectionSphere{T<:Real} <: PhotonTarget{T}
 end
 
 
-struct SimpleMultiPMTDetector{T<:Real, N<:Integer} <: PhotonTarget{T}
+struct MultiPMTDetector{T<:Real, N, L} <: PhotonTarget{T}
     position::SVector{3,T}
     radius::T
     pmt_area::T
-    pmt_coordinates::SVector{N, Tuple{T, T}}
+    pmt_coordinates::SMatrix{2, N, T, L}
 end
 
-function make_pom_pmt_coordinates()
 
-    θ = [fill(deg2rad(90 - 57.5), 4) fill(deg2rad(90 + 57.5), 4) fill(deg2rad(90 - 25), 4) fill(deg2rad(90 + 25), 4)]
-    ϕ = [deg2rad.(range(45; step=90, length=4)) deg2rad.(range(45; step=90, length=4)) deg2rad.(range(0; step=90, length=4)) deg2rad.(range(0; step=90, length=4))]
-    return SA[tp for tp in zip(θ, ϕ)]
+function check_pmt_hit(position::SVector{3, <:Real}, det::MultiPMTDetector{<:Real}) 
+    rel_pos = (position .- det.position) ./ det.radius
+    pmt_radius = sqrt(det.pmt_area) / π
+    opening_angle = asin(pmt_radius / det.radius)
+    
+    for (i, (det_θ, det_ϕ)) in enumerate(eachcol(det.pmt_coordinates))
+
+        pmt_cart = sph_to_cart(det_θ, det_ϕ)
+        rel_pos_rot = apply_rot(pmt_cart, SA[0., 0., 1.], rel_pos)
+
+        if acos(rel_pos_rot[3]) < opening_angle
+            return i
+        end
+    end
+    return 0
+end
+
+
+
+
+function make_pom_pmt_coordinates(T::Type)
+
+    coords = Matrix{T}(undef, 2, 16)
+
+    # upper
+    coords[1, 1:4] .= deg2rad(90 - 57.5)
+    coords[2, 1:4] = (range(π/4; step=π/2, length=4))
+
+    # upper 2
+    coords[1, 5:8] .= deg2rad(90 - 25)
+    coords[2, 5:8] = (range(0; step=π/2, length=4))
+
+    # lower 2
+    coords[1, 9:12] .= deg2rad(90 + 25)
+    coords[2, 9:12] = (range(0; step=π/2, length=4))
+
+    # lower
+    coords[1, 13:16] .= deg2rad(90 + 57.5)
+    coords[2, 13:16] = (range(π/4; step=π/2, length=4))
+
+    return SMatrix{2, 16}(coords)
 end
 
 

@@ -109,7 +109,7 @@ end
     track_dir::SVector{3, T} = sample_cherenkov_track_direction(T)
     
     # Rotate track coordinate system such, that e_z aligns with source direction
-    track_dir = rotate_to_axis(source.direction, track_dir)
+    track_dir = rot_ez_fast(source.direction, track_dir)
 
     # Sample a photon direction. Coordinate system aligned with e_z
     theta_cherenkov = get_cherenkov_angle(wl, medium)
@@ -118,7 +118,7 @@ end
     ph_dir = sph_to_cart(theta_cherenkov, phi)
 
     # Rotate track coordinate system such, that e_z aligns with track direction
-    ph_dir = rotate_to_axis(track_dir, ph_dir)
+    ph_dir = rot_ez_fast(track_dir, ph_dir)
     return ph_dir
 end
 
@@ -150,54 +150,6 @@ end
 end
 
 
-@inline function rotate_to_axis(old_dir::SVector{3,T}, new_dir::SVector{3,T}) where {T}
-    #=
-    New direction is relative to e_z. Axis of rotation defined by rotating e_z to old dir and applying
-    that transformation to new_dir.
-
-    Rodrigues rotation formula:
-        ax = e_z x dir
-        #theta = acos(dir * new_dir)
-        theta = asin(|x|)
-
-        axop = axis x new_dir
-        rotated = new_dir * cos(theta) + sin(theta) * (axis x new_dir) + (1-cos(theta)) * (axis * new_dir) * axis
-    =#
-
-    if abs(old_dir[3]) == T(1)
-        return @SVector[new_dir[1], copysign(new_dir[2], old_dir[3]), copysign(new_dir[3], old_dir[3])]
-    end
-
-    # Determine angle of rotation (cross product e_z and old_dir)
-    # sin(theta) = | e_z x old_dir | = sqrt(1 - old_dir[3]^2)
-
-    # sinthetasq = 1 - old_dir[3]*old_dir[3]
-    sintheta = sqrt(fma(-old_dir[3], old_dir[3], 1))
-
-    # Determine axis of rotation (cross product of e_z and old_dir )    
-    ax1 = -old_dir[2] / sintheta
-    ax2 = old_dir[1] / sintheta
-
-    # rotated = operand .* cos(theta) + (cross(ax, operand) .* sin(theta)) +  (ax .* (1-cos(theta)) .* dot(ax, operand))
-
-    # kappa = (ax1 * new_dir[1] + ax2 * new_dir[2]) * (1 - old_dir[3])
-    kappa = fma(ax1, new_dir[1], ax2 * new_dir[2]) * (1 - old_dir[3])
-    nd3sintheta = new_dir[3] * sintheta
-
-    #new_x = new_dir[1] * old_dir[3] + ax2*nd3sintheta + ax1 * kappa
-    #new_y = new_dir[2] * old_dir[3] - ax1*nd3sintheta + ax1 * kappa
-    #new_z = new_dir[3] * old_dir[3] + (ax1*new_dir[2] - ax2*new_dir[1]) * sintheta
-
-    new_x = fma(new_dir[1], old_dir[3], fma(ax2, nd3sintheta, ax1 * kappa))
-    new_y = fma(new_dir[2], old_dir[3], fma(-ax1, nd3sintheta, ax2 * kappa))
-    new_z = fma(new_dir[3], old_dir[3], sintheta * (fma(ax1, new_dir[2], -ax2 * new_dir[1])))
-
-    # Can probably skip renormalizing
-    norm = sqrt(new_x^2 + new_y^2 + new_z^2)
-
-    return @SVector[new_x / norm, new_y / norm, new_z / norm]
-end
-
 
 @inline function update_direction(this_dir::SVector{3,T}) where {T}
     #=
@@ -215,7 +167,7 @@ end
     new_dir_2::T = sin_sca_phi * sin_sca_theta
     new_dir_3::T = cos_sca_theta
 
-    rotate_to_axis(this_dir, @SVector[new_dir_1, new_dir_2, new_dir_3])
+    rot_ez_fast(this_dir, @SVector[new_dir_1, new_dir_2, new_dir_3])
 
 end
 

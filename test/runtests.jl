@@ -9,7 +9,32 @@ using DataStructures
 @testset "NeutrinoTelescopes.jl" begin
 
     @testset "Utils" begin
-        using NeutrinoTelescopes.Utils
+
+        @testset "Rotations" begin
+
+            e_z = SA[0., 0., 1.]
+            e_x = SA[1., 0., 0.]
+            e_y = SA[0., 1., 0.]
+            # Test that applying the rotation to the first vector yields the second vector
+            let theta=0.2, phi=1.4
+                dir = sph_to_cart(theta, phi)
+                @test all(isapprox.(apply_rot(dir, e_z, dir), e_z; atol=1E-9))
+            end
+
+            let θ_1=π/2, θ_2=π/2, ϕ_1=0, ϕ_2=π/4
+                # Rotation by 45° around z
+                dir_1 = sph_to_cart(θ_1, ϕ_1)
+                dir_2 = sph_to_cart(θ_2, ϕ_2)
+                @show apply_rot(dir_1, dir_2, e_x)
+                @test all(isapprox.(apply_rot(dir_1, dir_2, e_x), SA[1/sqrt(2), 1/sqrt(2), 0]; atol=1E-9))
+            end
+
+            let θ_1=0.2, θ_2=1.3, ϕ_1=1.8, ϕ_2=2.5
+                dir_1 = sph_to_cart(θ_1, ϕ_1)
+                dir_2 = sph_to_cart(θ_2, ϕ_2)
+                @test all(apply_rot(dir_1, e_z, dir_2) .≈ rot_ez_fast(dir_1, dir_2))
+            end
+        end
 
         @testset "integrate_gauss_quad" begin
             let f = x->x^3
@@ -42,6 +67,14 @@ using DataStructures
             let theta = π / 2, phi = π / 2
                 @test sph_to_cart(theta, phi) ≈ SA[0.0, 1.0, 0.0]
             end
+        end
+
+        @testset "cart_to_sph" begin
+        
+            let theta = 0.3, phi=1.5
+                @test all(cart_to_sph(sph_to_cart(theta, phi)) .≈ (theta, phi))
+            end
+        
         end
 
         @testset "CategoricalSetDistribution" begin
