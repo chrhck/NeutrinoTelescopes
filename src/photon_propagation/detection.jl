@@ -10,7 +10,7 @@ using Base.Iterators
 using ...Utils
 
 
-export PhotonTarget, DetectionSphere, p_one_pmt_acc, MultiPMTDetector, make_pom_pmt_coordinates
+export PhotonTarget, DetectionSphere, p_one_pmt_acc, MultiPMTDetector, make_pom_pmt_coordinates, get_pmt_count
 export check_pmt_hit
 export make_detector_cube, make_targets, make_detector_hex
 export area_acceptance
@@ -34,10 +34,14 @@ struct MultiPMTDetector{T<:Real, N, L} <: PhotonTarget{T}
     pmt_coordinates::SMatrix{2, N, T, L}
 end
 
+get_pmt_count(det::DetectionSphere) = 1
+get_pmt_count(det::MultiPMTDetector) = size(det.pmt_coordinates, 2)
+
+check_pmt_hit(::SVector{3, <:Real}, det::DetectionSphere) = 1
 
 function check_pmt_hit(position::SVector{3, <:Real}, det::MultiPMTDetector{<:Real}) 
     rel_pos = (position .- det.position) ./ det.radius
-    pmt_radius = sqrt(det.pmt_area) / π
+    pmt_radius = sqrt(det.pmt_area / π) 
     opening_angle = asin(pmt_radius / det.radius)
     
     for (i, (det_θ, det_ϕ)) in enumerate(eachcol(det.pmt_coordinates))
@@ -51,7 +55,6 @@ function check_pmt_hit(position::SVector{3, <:Real}, det::MultiPMTDetector{<:Rea
     end
     return 0
 end
-
 
 
 
@@ -75,19 +78,26 @@ function make_pom_pmt_coordinates(T::Type)
     coords[1, 13:16] .= deg2rad(90 + 57.5)
     coords[2, 13:16] = (range(π/4; step=π/2, length=4))
 
-    return SMatrix{2, 16}(coords)
+    R = calc_rot_matrix(SA[0., 0., 1.], SA[1., 0., 0.])
+    @views for col in eachcol(coords)
+        cart = sph_to_cart(col[1], col[2])
+        col[:] .= cart_to_sph((R*cart)...)
+   end
+
+   return SMatrix{2, 16}(coords)
 end
 
 
 
 
-function area_acceptance(target::DetectionSphere)
+function area_acceptance(::SVector{3, <:Real}, target::DetectionSphere)
     total_pmt_area = target.n_pmts * target.pmt_area
     detector_surface = 4*π * target.radius^2
 
     return total_pmt_area / detector_surface
 end
 
+area_acceptance(::SVector{3, <:Real}, ::MultiPMTDetector) = 1
 
 struct PMTWavelengthAcceptance
     interpolation::Interpolations.Extrapolation

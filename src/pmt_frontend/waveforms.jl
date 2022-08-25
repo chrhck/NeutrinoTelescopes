@@ -11,7 +11,16 @@ export add_gaussian_white_noise, digitize_waveform, unfold_waveform, plot_wavefo
 struct Waveform{T<:Real,U <: AbstractVector{T}, V<:AbstractVector{T}}
     timestamps::U
     values::V
+
+    function Waveform(timestamps::U, values::V) where {T <:Real, U<: AbstractVector{T}, V<: AbstractVector{T}}
+        if length(timestamps) != length(values)
+            error("Timestamps and values have to have same length.")
+        end
+        new{T, U, V}(timestamps, values)
+    end
 end
+
+Base.length(wf::Waveform) = length(wf.timestamps)
 
 @recipe function f(wf::T) where {T<:Waveform}
     wf.timestamps, wf.values
@@ -24,7 +33,9 @@ end
 
 
 function make_waveform(ps::PulseSeries, sampling_freq::Real, noise_amp::Real; time_range=300)
-    
+    if length(ps) == 0
+        return Waveform(empty(ps.times), empty(ps.times))
+    end
     min_time = minimum(ps.times) - 50
     max_time = min_time + time_range
 
@@ -48,6 +59,10 @@ function digitize_waveform(
     digitizer_frequency::Real,
     filter; 
 )
+
+    if length(waveform) == 0
+        return Waveform(empty(waveform.timestamps), empty(waveform.values))
+    end
 
     min_time, max_time = extrema(waveform.timestamps)
     waveform_filtered = filt(filter, waveform.values)
@@ -111,13 +126,16 @@ end
 
 
 function unfold_waveform(
-    digi_wf::Waveform{T,V},
+    digi_wf::Waveform,
     pulse_model::PulseTemplate,
-    pulse_resolution::T,
-    min_charge::T,
+    pulse_resolution::Real,
+    min_charge::Real,
     alg::Symbol=:nnls
-) where {T<:Real,V<:AbstractVector{T}}
+)
 
+    if length(digi_wf) == 0
+        return PulseSeries(empty(digi_wf.timestamps), empty(digi_wf.values), pulse_model)
+    end
     min_time, max_time = extrema(digi_wf.timestamps)
     pulse_times = collect(range(min_time, max_time, step=pulse_resolution))
     pulse_charges = apply_nnls(pulse_times, pulse_model, digi_wf, alg=alg)

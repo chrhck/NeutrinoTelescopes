@@ -1,14 +1,4 @@
 using NeutrinoTelescopes
-using NeutrinoTelescopes.Modelling
-using NeutrinoTelescopes.PMTFrontEnd
-using NeutrinoTelescopes.Utils
-using NeutrinoTelescopes.Medium
-using NeutrinoTelescopes.Detection
-using NeutrinoTelescopes.Types
-using NeutrinoTelescopes.LightYield
-using NeutrinoTelescopes.Spectral
-import NeutrinoTelescopes: PhotonPropagationCuda as ppcu
-using NeutrinoTelescopes.Emission
 using Plots
 using Distributions
 using Random
@@ -20,15 +10,6 @@ using DataFrames
 
 using LinearAlgebra
 
-using Unitful
-using PhysicalConstants.CODATA2018
-
-
-
-data = BSON.load(joinpath(@__DIR__, "../assets/photon_model.bson"), @__MODULE__)
-model = data[:model] |> gpu
-
-output_trafos = [:log, :log, :neg_log_scale]
 
 distance = 50f0
 n_pmts=16
@@ -38,8 +19,8 @@ target = DetectionSphere(@SVector[0.0f0, 0.0f0, distance], target_radius, n_pmts
 
 targets = [target]
 
-zenith_angle = 0f0
-azimuth_angle = 0f0
+zenith_angle = 10f0
+azimuth_angle = 10f0
 
 pdir = sph_to_cart(deg2rad(zenith_angle), deg2rad(azimuth_angle))
 
@@ -52,9 +33,32 @@ particle = Particle(
 )
 
 medium = make_cascadia_medium_properties(Float32)
+
+prop_source_ext = ExtendedCherenkovEmitter(particle, medium, (300f0, 800f0))
+prop_source_che = PointlikeCherenkovEmitter(particle, medium, (300f0, 800f0))
+prop_source_iso = PointlikeIsotropicEmitter(particle.position, particle.time, Int64(1E11), medium, (300f0, 800f0))
+
+results_che, nph_sim_che = propagate_source(prop_source_che, distance, medium)
+results_ext, nph_sim_ext = propagate_source(prop_source_ext, distance, medium)
+results_iso, nph_sim_iso = propagate_source(prop_source_iso, distance, medium)
+
+
+dir_weight_new = get_dir_reweight.(results_iso[:, :initial_directions], Ref(particle.direction), results_iso[:, :ref_ix])
+
+
+histogram(results_che[:, :tres],  weights=results_che[:, :total_weight], xlim=(-10, 100), yscale=:log10, ylim=(1E-5, 1E1))
+
+
+directions = [PhotonPropagation.PhotonPropagationCuda.sample_cherenkov_direction(prop_source_che, medium, 350f0) for _ in 1:10000]
+
+scatter([dir[1] for dir in directions], [dir[2] for dir in directions], [dir[3] for dir in directions], ms=0.3)
+
+plot!([0, 2*particle.direction[1]], [0, 2*particle.direction[2]], [0, 2*particle.direction[3]], lw=5)
+
+data = BSON.load(joinpath(@__DIR__, "../assets/photon_model.bson"), @__MODULE__)
+model = data[:model] |> gpu
+output_trafos = [:log, :log, :neg_log_scale]
 model_params, sources, mask, distances = evaluate_model(targets, particle, medium, 0.5f0, model, output_trafos)
-
-
 
 poissons = poisson_dist_per_module(model_params, sources, mask)
 shapes = shape_mixture_per_module(model_params, sources, mask, distances, medium)

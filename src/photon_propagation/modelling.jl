@@ -48,7 +48,7 @@ global c_vac_m_ns = ustrip(u"m/ns", SpeedOfLightInVacuum)
 
 function get_dir_reweight(em_dir::SVector{3, T}, shower_axis::SVector{3, U}, ref_ix::T) where {T<:Real, U<:Real}
     # Assume that source-target direction is e_z    
-    rot_ph_dir = rodrigues_rotation(shower_axis, SA[0., 0., 1.], em_dir)
+    rot_ph_dir = rot_to_ez_fast(shower_axis, em_dir)
 
     ph_cos_theta = rot_ph_dir[3]
     norm = cherenkov_ang_dist_int(ref_ix) .* 2

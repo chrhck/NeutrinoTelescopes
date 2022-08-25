@@ -25,15 +25,20 @@ using DataStructures
                 # Rotation by 45° around z
                 dir_1 = sph_to_cart(θ_1, ϕ_1)
                 dir_2 = sph_to_cart(θ_2, ϕ_2)
-                @show apply_rot(dir_1, dir_2, e_x)
                 @test all(isapprox.(apply_rot(dir_1, dir_2, e_x), SA[1/sqrt(2), 1/sqrt(2), 0]; atol=1E-9))
             end
 
-            let θ_1=0.2, θ_2=1.3, ϕ_1=1.8, ϕ_2=2.5
+            let θ_1=0.2, θ_2=1.3, ϕ_1=1.8, ϕ_2=2.5,
                 dir_1 = sph_to_cart(θ_1, ϕ_1)
                 dir_2 = sph_to_cart(θ_2, ϕ_2)
-                @test all(apply_rot(dir_1, e_z, dir_2) .≈ rot_ez_fast(dir_1, dir_2))
+                @test all(apply_rot(dir_1, e_z, dir_2) .≈ rot_to_ez_fast(dir_1, dir_2))
+                @test all(apply_rot(e_z, dir_1, dir_2) .≈ rot_from_ez_fast(dir_1, dir_2))
+           
             end
+
+
+
+
         end
 
         @testset "integrate_gauss_quad" begin

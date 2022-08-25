@@ -371,6 +371,11 @@ struct PointlikeIsotropicEmitter{T, U<:Spectrum} <: PhotonSource{T}
     spectrum::U
 end
 
+function PointlikeIsotropicEmitter(position::SVector{3, T}, time::T, photons::Int64, medium::MediumProperties, wl_range::Tuple{T, T}) where {T<:Real}
+    spectrum = CherenkovSpectrum(wl_range, 20, medium)
+    PointlikeIsotropicEmitter(position, time, photons, spectrum)
+end
+
 
 struct ExtendedCherenkovEmitter{T, N} <: CherenkovEmitter{T}
     position::SVector{3,T}

@@ -7,7 +7,7 @@ using Distributions
 
 export fast_linear_interp, transform_integral_range
 export integrate_gauss_quad
-export sph_to_cart, apply_rot, cart_to_sph, rot_ez_fast
+export sph_to_cart, apply_rot, cart_to_sph, rot_to_ez_fast, rot_from_ez_fast, calc_rot_matrix
 export CategoricalSetDistribution
 export sample_cherenkov_track_direction
 export rand_gamma
@@ -114,9 +114,19 @@ end
 
 
 function cart_to_sph(x::Real, y::Real, z::Real)
+    if z==1
+        return 0, 0
+    elseif z==-1
+        return π, 0
+    end
     theta = acos(z)
-    phi = acos(x / sin(theta))
-
+    if (x==0) && (y > 0)
+        phi = π/2
+    elseif (x==0) && (y < 0)
+        phi = -π/2
+    else
+        phi = atan(y, x)
+    end
     return theta, phi
 end
 
@@ -157,15 +167,10 @@ Base.rand(pdist::CategoricalSetDistribution) = pdist.set[rand(pdist.cat)]
 
 ssc(v::AbstractVector) = [0 -v[3] v[2]; v[3] 0 -v[1]; -v[2] v[1] 0]
 
-"""
-    apply_rot(a, b, operand)
 
-Calculates rotation matrix obtained by rotating a to b. Apply to operand.
-Apply the resulting rotation to operand.
-"""
-function apply_rot(a, b, operand)
-    # Rotate a to b and apply to operand
-    if a == b
+function calc_rot_matrix(a, b)
+     # Rotate a to b and apply to operand
+     if a == b
         return operand
     end
 
@@ -173,12 +178,23 @@ function apply_rot(a, b, operand)
     ssc_cross_ab = ssc(cross_ab)
 
     R = I + ssc_cross_ab + ssc_cross_ab^2 * (1-dot(a, b)) / norm(cross_ab)^2
+end
+
+
+"""
+    apply_rot(a, b, operand)
+
+Calculates rotation matrix obtained by rotating a to b. Apply to operand.
+Apply the resulting rotation to operand.
+"""
+function apply_rot(a, b, operand)
+    R = calc_rot_matrix(a, b)
     res = R * operand
     return res ./ norm(res)
 end
 
 
-@inline function rot_ez_fast(a::SVector{3, T}, operand::SVector{3, T}) where {T<:Real}
+@inline function rot_to_ez_fast(a::SVector{3, T}, operand::SVector{3, T}) where {T<:Real}
 
     if abs(a[3]) == T(1)
         return @SVector[operand[1], copysign(operand[2], a[3]), copysign(operand[3], a[3])]
@@ -189,7 +205,8 @@ end
     norm_cross_ab_sq = a[2]^2 + a[1]^2
     ssc_ab = [0 0 -a[1]; 0 0 -a[2]; a[1] a[2] 0 ]
     ssc_ab_sq = [-a[1]^2 -a[1]*a[2] 0; -a[1]*a[2] -a[2]^2 0; 0 0 -a[1]^2 -a[2]^2]
-     R = [1-a1sq*fact  -a[1]*a[2]*fact -a[1] ;
+
+    R = [1-a1sq*fact  -a[1]*a[2]*fact -a[1] ;
         -a[1]*a[2]*fact 1-fact*a2sq   -a[2] ;
          a[1]           a[2]             a[3]]
     =#
@@ -202,12 +219,26 @@ end
     y = -a1a2*fact*operand[1] + fma(-a2sq, fact, 1) * operand[2] -a[2]*operand[3]
     z = a[1] * operand[1] + a[2] * operand[2] + a[3]*operand[3]
     return SA[x, y, z]
-emd
-    
-
-
-
 end
+
+
+@inline function rot_from_ez_fast(a::SVector{3, T}, operand::SVector{3, T}) where {T<:Real}
+
+    if abs(a[3]) == T(1)
+        return @SVector[operand[1], copysign(operand[2], a[3]), copysign(operand[3], a[3])]
+    end
+
+    a1sq = a[1]^2
+    a2sq = a[2]^2
+    fact = (1-a[3]) / (a2sq + a1sq)
+    a1a2 = a[1] * a[2]
+
+    x = fma(-a1sq, fact, 1) * operand[1] -a1a2*fact*operand[2]  + a[1]*operand[3]
+    y = -a1a2*fact*operand[1] + fma(-a2sq, fact, 1) * operand[2] + a[2]*operand[3]
+    z = -a[1] * operand[1] - a[2] * operand[2] + a[3]*operand[3]
+    return SA[x, y, z]
+end
+    
 
 
 """

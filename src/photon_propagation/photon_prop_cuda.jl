@@ -15,7 +15,7 @@ using Logging
 export cuda_propagate_photons!, initialize_photon_arrays, process_output
 export cuda_propagate_multi_target!
 export cherenkov_ang_dist, cherenkov_ang_dist_int
-export propagate_source
+export make_hits_from_photons, propagate_photons, run_photon_prop
 export fit_photon_dist, make_photon_fits
 
 using ...Utils
@@ -105,20 +105,34 @@ end
 end
 
 @inline function sample_cherenkov_direction(source::CherenkovEmitter{T}, medium::MediumProperties, wl::T) where {T <: Real}
-    # Sample a direction of a "Cherenkov track". Coordinate system aligned with e_z
+
+    # Sample a photon direction. Assumes track is aligned with e_z
+    theta_cherenkov = get_cherenkov_angle(wl, medium)
+    phi = uniform(T(0), T(2 * pi))    
+    ph_dir = sph_to_cart(theta_cherenkov, phi)
+
+
+    
+    # Sample a direction of a "Cherenkov track". Assumes source direction is e_z
+    track_dir::SVector{3, T} = sample_cherenkov_track_direction(T)
+
+    # Rotate photon to track direction
+    ph_dir = rot_from_ez_fast(track_dir, ph_dir)
+    
+    # Rotate track to source direction
+    ph_dir = rot_from_ez_fast(source.direction, ph_dir)
+
+    
+    #= THIS IS WRONG
+    # Sample a direction of a "Cherenkov track". Assumes source direction is e_z
     track_dir::SVector{3, T} = sample_cherenkov_track_direction(T)
     
-    # Rotate track coordinate system such, that e_z aligns with source direction
+    # Rotate track coordinate system such that e_z aligns with source direction
     track_dir = rot_ez_fast(source.direction, track_dir)
-
-    # Sample a photon direction. Coordinate system aligned with e_z
-    theta_cherenkov = get_cherenkov_angle(wl, medium)
-    phi = uniform(T(0), T(2 * pi))
-    
-    ph_dir = sph_to_cart(theta_cherenkov, phi)
 
     # Rotate track coordinate system such, that e_z aligns with track direction
     ph_dir = rot_ez_fast(track_dir, ph_dir)
+    =#
     return ph_dir
 end
 
@@ -167,7 +181,7 @@ end
     new_dir_2::T = sin_sca_phi * sin_sca_theta
     new_dir_3::T = cos_sca_theta
 
-    rot_ez_fast(this_dir, @SVector[new_dir_1, new_dir_2, new_dir_3])
+    rot_from_ez_fast(this_dir, @SVector[new_dir_1, new_dir_2, new_dir_3])
 
 end
 
@@ -645,10 +659,12 @@ function calculate_max_stack_size(total_mem, blocks)
 end
 
 
-function propagate_photons(
+
+function run_photon_prop(
     source::PhotonSource,
     target::PhotonTarget,
-    medium::MediumProperties)
+    medium::MediumProperties
+)
 
     positions, directions, wavelengths, dist_travelled, times, stack_idx, n_ph_sim = initialize_photon_arrays(1, 1, Float32)
     err_code = CuVector(zeros(Int32, 1))
@@ -666,118 +682,66 @@ function propagate_photons(
     max_total_stack_len = calculate_max_stack_size(0.5*avail_mem, blocks)
     stack_len = Int32(cld(max_total_stack_len, blocks))
     positions, directions, wavelengths, dist_travelled, times, stack_idx, n_ph_sim = initialize_photon_arrays(stack_len, blocks, Float32)
-   
+
     kernel(
         positions, directions, wavelengths, dist_travelled, times, stack_idx, n_ph_sim, err_code, stack_len, Int64(0),
         source, spectrum_texture, target.position, target.radius, Val(medium); threads=threads, blocks=blocks, shmem=sizeof(Int64))
-    return (positions, directions, wavelengths, dist_travelled, times, stack_idx, n_ph_sim)
+
+    return positions, directions, wavelengths, dist_travelled, times, stack_idx, n_ph_sim
 end
 
-function propagate_source(source::PhotonSource, distance, medium::MediumProperties, n_pmts=16, pmt_area=Float32((75e-3 / 2)^2*π))
 
-    target_radius = 0.21f0
-    distance = Float32(distance)
-    target = DetectionSphere(@SVector[0.0f0, 0.0f0, distance], target_radius, n_pmts, pmt_area)
+function propagate_photons(
+    source::PhotonSource,
+    target::PhotonTarget,
+    medium::MediumProperties)
 
-    #=
-    @debug "Max stack size (90%): $max_total_stack_len"
+    positions, directions, wavelengths, dist_travelled, times, stack_idx, n_ph_sim = run_photon_prop(source, target, medium)
 
-    n_ph_gen = source.photons
-
-    if n_ph_gen > max_total_stack_len
-        @debug "Estimating acceptance fraction"
-        test_nph = 1E5
-        # Estimate required_stack_length
-        stack_len = Int32(cld(1E5, blocks))
-
-        test_source = PointlikeIsotropicEmitter(
-            @SVector[0.0f0, 0.0f0, 0.0f0],
-            0.0f0,
-            Int64(test_nph),
-            CherenkovSpectrum((300.0f0, 800.0f0), 20, medium),
-        )
-        positions, directions, wavelengths, dist_travelled, times, stack_idx, n_ph_sim = propagate_photons(
-            test_source,
-            target,
-            medium,
-            stack_len)
-
-        n_ph_sim = Vector(n_ph_sim)[1]
-        n_ph_det = sum(stack_idx .% stack_len)
-        acc_frac = n_ph_det / n_ph_sim
-
-        @debug "Acceptance fraction: $acc_frac"
-
-        est_surv = acc_frac * n_ph_gen
-        
-        if est_surv > max_total_stack_len
-            @warn "WARNING: Estimating more than $(max_total_stack_len) surviving photons, number of generated photons might be truncated" maxlog=3
-            est_surv = max_total_stack_len
-        end
-
-        stack_len = max(Int32(cld(est_surv, blocks)), Int32(1E6))
-    else
-        stack_len = Int32(1E6)
-    end
-    =#
-    positions, directions, wavelengths, dist_travelled, times, stack_idx, n_ph_sim = propagate_photons(
-        source,
-        target,
-        medium)
-
-
+    stack_idx = Vector(stack_idx)
     n_ph_sim = Vector(n_ph_sim)[1]
-    
     if all(stack_idx .== 0)
         return DataFrame(), n_ph_sim
     end
-
-    stack_idx = Vector(stack_idx)
-
-
+    
+    positions = process_output(Vector(positions), stack_idx)
     dist_travelled = process_output(Vector(dist_travelled), stack_idx)
     wavelengths = process_output(Vector(wavelengths), stack_idx)
     directions = process_output(Vector(directions), stack_idx)
     times = process_output(Vector(times), stack_idx)
 
-    abs_length = get_absorption_length.(wavelengths, Ref(medium))
-    abs_weight = convert(Vector{Float64}, exp.(-dist_travelled ./ abs_length))
-
-    area_acc = area_acceptance(target)
-    pmt_acc = p_one_pmt_acc.(wavelengths)
-    
-    ref_ix = get_refractive_index.(wavelengths, Ref(medium))
-    c_vac = ustrip(u"m/ns", SpeedOfLightInVacuum)
-    # c_grp = get_group_velocity.(wavelengths, Ref(medium))
-
-
-    #photon_times = dist_travelled ./ c_grp
-    
-    tgeo = (distance - target_radius) ./ (c_vac / get_refractive_index(800.0f0, medium))
-    tres = (times .- tgeo)
-
-    (DataFrame(
-        tres=tres,
-        initial_directions=directions,
-        ref_ix=ref_ix,
-        abs_weight=abs_weight,
+    return DataFrame(
+        position=positions,
+        direction=directions,
+        wavelength=wavelengths,
         dist_travelled=dist_travelled,
-        abs_length=abs_length,
-        area_acc=area_acc,
-        pmt_acc=pmt_acc,
-        total_weight = pmt_acc .* abs_weight .* area_acc,
-        wavelength=wavelengths),
-    n_ph_sim)
+        time=times), n_ph_sim
 end
 
-#=
-# Workaround for Flux breaking the RNG
-function __init__()
-    println("Doing initial prop")
-    medium = make_cascadia_medium_properties(Float32)
-    propagate_distance(10.0f0, medium, 100)
-    nothing
+
+function make_hits_from_photons(df::AbstractDataFrame , source::PhotonSource, target::PhotonTarget, medium::MediumProperties)
+    
+    df[!, :pmt_id] = check_pmt_hit.(df[:, :position], Ref(target))
+    
+    subset!(df, :pmt_id => x -> x .> 0)
+
+    df[!, :area_acc] = area_acceptance.(df[:, :position], Ref(target))
+
+    abs_length = get_absorption_length.(df[:, :wavelength], Ref(medium))
+    df[!, :abs_weight] = convert(Vector{Float64}, exp.(-df[:, :dist_travelled] ./ abs_length))
+
+    df[!, :wl_acc] = p_one_pmt_acc.(df[:, :wavelength])
+    
+    df[!, :ref_ix] = get_refractive_index.(df[:, :wavelength], Ref(medium))
+    c_vac = ustrip(u"m/ns", SpeedOfLightInVacuum)
+    
+    distance = norm(source.position .- target.position)
+
+    tgeo = (distance - target.radius) ./ (c_vac / get_refractive_index(800.0f0, medium))
+    df[!, :tres] = (df[:, :time] .- tgeo)
+
+    df[!, :total_weight] = df[:, :area_acc] .* df[:, :wl_acc] .* df[:, :abs_weight]
+    df
 end
-=#
 
 end # module

@@ -56,7 +56,7 @@ STD_PMT_CONFIG = PMTConfig(
     0.125
 )
 
-function resample_simulation(df::DataFrame)
+function resample_simulation(df::AbstractDataFrame )
     hit_times = df[:, :tres]
     wsum = sum(df[:, :total_weight])
     norm_weights = df[:, :total_weight] ./ wsum
@@ -66,7 +66,7 @@ function resample_simulation(df::DataFrame)
 end
 
 
-function make_reco_pulses(results::DataFrame, pmt_config::PMTConfig=STD_PMT_CONFIG)
+function make_reco_pulses(results::AbstractDataFrame , pmt_config::PMTConfig=STD_PMT_CONFIG)
     @pipe results |>
       resample_simulation |>
       PulseSeries(_, pmt_config.spe_template, pmt_config.pulse_model) |>
