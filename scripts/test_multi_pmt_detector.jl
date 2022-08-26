@@ -4,11 +4,11 @@ using StaticArrays
 using Random
 using LinearAlgebra
 using DataFrames
+using StatsPlots
 
 distance = 50f0
 medium = make_cascadia_medium_properties(Float32)
 source = PointlikeIsotropicEmitter(SA[0f0, 0f0, 0f0], 0f0, Int64(1E8), CherenkovSpectrum((300f0, 800f0), 50, medium))
-n_pmts=16
 pmt_area=Float32((75e-3 / 2)^2*π)
 target_radius = 0.21f0
 
@@ -57,6 +57,38 @@ hit_photons = positions[hit_pmts .!= 0]
 
 scatter!([p[1] for p in hit_photons], [p[2] for p in hit_photons], [p[3] for p in hit_photons],
 ms=0.5, alpha=0.9, color=:red)
+
+
+zenith_angle = 20f0
+azimuth_angle = 10f0
+
+pdir = sph_to_cart(deg2rad(zenith_angle), deg2rad(azimuth_angle))
+
+particle = Particle(
+        @SVector[0.0f0, 0f0, 0.0f0],
+        pdir,
+        0f0,
+        Float32(1E5),
+        PEMinus
+)
+
+prop_source = ExtendedCherenkovEmitter(particle, medium, (300f0, 800f0))
+
+res, nph_sim = propagate_photons(prop_source, target, medium)
+res = make_hits_from_photons(res, source, target, medium)
+groups = groupby(res, :pmt_id)
+
+histogram(groups[5][:, :tres], weights=groups[5][:, :total_weight], xlim=(-10, 100))
+
+reco_pulses = make_reco_pulses(groups[5])
+plot!(reco_pulses, xlim=(-10, 50))
+
+
+refolded = PulseSeries(reco_pulses.times, reco_pulses.charges, STD_PMT_CONFIG.pulse_model)
+plot!(refolded, xlim=(-10, 50))
+
+@df combine(groups, nrow) scatter(:pmt_id, :nrow)
+
 
 
 anim = @animate for zen in 0:20:180

@@ -21,9 +21,9 @@ min_diff_z = minimum(diff(sort(unique(p[3] for p in positions))))
 diff(sort(unique(p[2] for p in positions)))
 
 
-steps_x = Int32(fld(boundary_x[2]-boundary_x[1], min_diff_x))
-steps_y = Int32(fld(boundary_y[2]-boundary_y[1], min_diff_y))
-steps_z = Int32(fld(boundary_z[2]-boundary_z[1], min_diff_z))
+steps_x = Int64(fld(boundary_x[2]-boundary_x[1], min_diff_x))
+steps_y = Int64(fld(boundary_y[2]-boundary_y[1], min_diff_y))
+steps_z = Int64(fld(boundary_z[2]-boundary_z[1], min_diff_z))
 
 struct VoxelGrid{T<:Real} 
     n_steps::SVector{3, Int64}
@@ -198,7 +198,7 @@ function traverse_grid(position::SVector{3, T}, direction::SVector{3, T}, grid::
 end
 
 
-grid = VoxelGrid((steps_x, steps_y, steps_z), SA[boundary_x[1], boundary_y[1], boundary_z[1]],  SA[boundary_x[2], boundary_y[2], boundary_z[2]])
+grid = VoxelGrid(SA[steps_x, steps_y, steps_z], SA[boundary_x[1], boundary_y[1], boundary_z[1]],  SA[boundary_x[2], boundary_y[2], boundary_z[2]])
 grid
 
 position = SA[-500., 0., 0.]
@@ -224,6 +224,7 @@ for (i, j) in product(0:grid.n_steps[1]-1, 0:grid.n_steps[2]-1)
     plot!(p, rectangle(grid.Δ[1], grid.Δ[2], grid.start[1]+i*grid.Δ[1], grid.start[2]+j*grid.Δ[2]), opacity=opac, label="", color=:red)
 end
 
+p
 is_filled = zeros(Bool, grid.n_steps .+1)
 voxel_ixs = grid_index.(positions, Ref(grid))
 dpositions = Array{SVector{3, eltype(positions[1])}, 3}(undef, grid.n_steps .+1)

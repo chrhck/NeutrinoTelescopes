@@ -37,18 +37,20 @@ end
 get_pmt_count(det::DetectionSphere) = 1
 get_pmt_count(det::MultiPMTDetector) = size(det.pmt_coordinates, 2)
 
-check_pmt_hit(::SVector{3, <:Real}, det::DetectionSphere) = 1
+check_pmt_hit(::SVector{3, <:Real}, ::DetectionSphere) = 1
 
-function check_pmt_hit(position::SVector{3, <:Real}, det::MultiPMTDetector{<:Real}) 
-    rel_pos = (position .- det.position) ./ det.radius
-    pmt_radius = sqrt(det.pmt_area / π) 
-    opening_angle = asin(pmt_radius / det.radius)
+function check_pmt_hit(position::SVector{3, <:Real}, target::MultiPMTDetector{<:Real}) 
+    rel_pos = convert(SVector{3, Float64}, (position .- target.position))
+    rel_pos = rel_pos ./ norm(rel_pos)
+    pmt_radius = sqrt(target.pmt_area / π) 
+    opening_angle = asin(pmt_radius / target.radius)
     
-    for (i, (det_θ, det_ϕ)) in enumerate(eachcol(det.pmt_coordinates))
-
-        pmt_cart = sph_to_cart(det_θ, det_ϕ)
-        rel_pos_rot = apply_rot(pmt_cart, SA[0., 0., 1.], rel_pos)
-
+    rot_mats = [
+        calc_rot_matrix(sph_to_cart(det_θ, det_ϕ), SA[0., 0., 1.])
+        for (det_θ, det_ϕ) in eachcol(target.pmt_coordinates)
+    ]
+    for (i, R) in enumerate(rot_mats)
+        rel_pos_rot = R * rel_pos
         if acos(rel_pos_rot[3]) < opening_angle
             return i
         end

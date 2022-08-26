@@ -125,7 +125,7 @@ function make_filtered_pulse(
     timesteps = range(eval_range[1], eval_range[2], step=1 / sampling_freq)
     orig_eval = evaluate_pulse_template(orig_pulse, 0.0, timesteps)
     filtered = filt(filter, orig_eval)
-    interp_linear = LinearInterpolation(timesteps, filtered)
+    interp_linear = linear_interpolation(timesteps, filtered,extrapolation_bc=0.)
 
     return InterpolatedPulse(interp_linear, 1.0)
 end

@@ -18,59 +18,51 @@ spe_d = make_spe_dist(STD_PMT_CONFIG.spe_template)
 plot(x -> pdf(spe_d, x), 0, 5, ylabel="PDF", xlabel="Charge (PE)",
     title="SPE Template")
 
-gumb = truncated(Gumbel(0, gumbel_width_from_fwhm(5.0))+4, 0, 20)
-plot(gumb, -5:0.01:20)
-
-xs = -5:0.01:10
-dfdx = diff(pdf.(Ref(gumb), xs)) ./ diff(xs)
-
-plot(xs[1:end-1], dfdx)
-
-plot(x -> evaluate_pulse_template(STD_PMT_CONFIG.pulse_model, 0.0, x), -50, 50, ylabel="Amplitude (a.u.)", xlabel="Time (ns)")
-
+plot(x -> evaluate_pulse_template(STD_PMT_CONFIG.pulse_model, 0.0, x), -50, 50, ylabel="Amplitude (a.u.)", xlabel="Time (ns)", label="Pulse template")
+plot!(x -> evaluate_pulse_template(STD_PMT_CONFIG.pulse_model_filt, 0.0, x), -50, 50, label="Filtered")
 
 distance = 50f0
-n_pmts=16
 pmt_area=Float32((75e-3 / 2)^2*π)
 target_radius = 0.21f0
-target = DetectionSphere(@SVector[0.0f0, 0.0f0, distance], target_radius, n_pmts, pmt_area)
+target = MultiPMTDetector(@SVector[0.0f0, 0.0f0, distance], target_radius, pmt_area, 
+    make_pom_pmt_coordinates(Float32))
 medium = make_cascadia_medium_properties(Float32)
 targets = [target]
 
-p = plot()
-for zen in 0f0:20f0:180f0
 
-    zenith_angle = zen
-    azimuth_angle = 0f0
+zenith_angle = 20f0
+azimuth_angle = 0f0
 
-    pdir = sph_to_cart(deg2rad(zenith_angle), deg2rad(azimuth_angle))
-
-    particle = Particle(
-            @SVector[0.0f0, 0f0, 0.0f0],
-            pdir,
-            0f0,
-            Float32(1E5),
-            PEMinus
-    )
+particle = Particle(
+        @SVector[0.0f0, 0f0, 0.0f0],
+        sph_to_cart(deg2rad(zenith_angle), deg2rad(azimuth_angle)),
+        0f0,
+        Float32(1E5),
+        PEMinus
+)
 
 
-    prop_source_ext = ExtendedCherenkovEmitter(particle, medium, (300f0, 800f0))
-    #prop_source_che = PointlikeCherenkovEmitter(particle, medium, (300f0, 800f0))
+prop_source_ext = ExtendedCherenkovEmitter(particle, medium, (300f0, 800f0))
+#prop_source_che = PointlikeCherenkovEmitter(particle, medium, (300f0, 800f0))
 
-    #results_che, nph_sim_che = propagate_source(prop_source_che, distance, medium)
-    results_ext, nph_sim_ext = propagate_source(prop_source_ext, distance, medium)
+res, nph_sim = propagate_photons(prop_source_ext, target, medium)
+res = make_hits_from_photons(res, source, target, medium)
+res_grp_pmt = groupby(res, :pmt_id)
 
-    reco_pulses = make_reco_pulses(results_ext)
-    p = plot!(p, reco_pulses, xlim=(-50, 200))
-end
+results = res_grp_pmt[5]
 
-p
+reco_pulses = make_reco_pulses(results)
+plot(reco_pulses, xlim=(-50, 200))
 
-function plot_chain(results::DataFrame, pmt_config::PMTConfig)
+
+function plot_chain(results::AbstractDataFrame, pmt_config::PMTConfig)
     layout = @layout [a; b]
 
+    p1 = histogram(results[:, :tres], weights=results[:, :total_weight], 
+                   bins=-10:1:50, label="Photons", xlabel="Time residual (ns)", ylabel="Counts")
+
     hit_times = resample_simulation(results)
-    p1 = histogram(hit_times, bins=-10:1:50, label="Photons", xlabel="Time residual (ns)", ylabel="Counts")
+    p1 = histogram!(p1, hit_times, bins=-10:1:50, label="Hits")
 
     ps = PulseSeries(hit_times, pmt_config.spe_template, pmt_config.pulse_model)
     p2 = plot(ps, -10:0.01:50, label="True waveform", xlabel="Time residual (ns)", ylabel="Amplitude (a.u.)")
@@ -96,7 +88,7 @@ function plot_chain(results::DataFrame, pmt_config::PMTConfig)
 end
 
 
-plot_chain(results_ext, STD_PMT_CONFIG)
+plot_chain(results, STD_PMT_CONFIG)
 
 reco_pulses_che.times
 

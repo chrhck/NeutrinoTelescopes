@@ -8,6 +8,8 @@ import Base:@kwdef
 import Pipe:@pipe
 using PhysicalConstants.CODATA2018
 using Unitful
+using StatsBase
+using Random
 
 
 using ..SPETemplates
@@ -37,7 +39,7 @@ function PMTConfig(st::SPEDistribution, pm::PulseTemplate, snr_db::Real, samplin
     mode = get_template_mode(pm)
     designmethod = Butterworth(1)
     lp_filter = digitalfilter(Lowpass(lp_cutoff, fs=sampling_freq), designmethod)
-    filtered_pulse = make_filtered_pulse(pm, sampling_freq, (-1000.0, 1000.0), lp_filter)
+    filtered_pulse = make_filtered_pulse(pm, sampling_freq, (-10.0, 50.), lp_filter)
     PMTConfig(st, pm, filtered_pulse, mode / 10^(snr_db / 10), sampling_freq, unf_pulse_res, adc_freq, lp_filter)
 end
 
@@ -59,10 +61,10 @@ STD_PMT_CONFIG = PMTConfig(
 function resample_simulation(df::AbstractDataFrame )
     hit_times = df[:, :tres]
     wsum = sum(df[:, :total_weight])
-    norm_weights = df[:, :total_weight] ./ wsum
+    norm_weights = ProbabilityWeights(df[:, :total_weight], wsum)
     nhits = pois_rand(wsum)
-    d = Categorical(norm_weights)
-    hit_times = hit_times[rand(d, nhits)]
+
+    hit_times = sample(hit_times, norm_weights, nhits; replace=false)
 end
 
 
