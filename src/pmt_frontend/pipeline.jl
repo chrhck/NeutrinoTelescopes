@@ -10,20 +10,38 @@ using PhysicalConstants.CODATA2018
 using Unitful
 using StatsBase
 using Random
-
+using Interpolations
+using Roots
 
 using ..SPETemplates
 using ..PulseTemplates
 using ..Waveforms
+using ...Utils
 
 
 export resample_simulation
 export STD_PMT_CONFIG, PMTConfig
 export make_reco_pulses
+export calc_gamma_shape_mean_fwhm
+export apply_tt, subtract_mean_tt
 
 
 
-@kwdef struct PMTConfig{ T<:Real, S <: SPEDistribution{T}, P<:PulseTemplate, U<:PulseTemplate}
+function calc_gamma_shape_mean_fwhm(mean, target_fwhm)
+
+
+    function _optim(theta)
+        alpha = mean / theta
+        tt_dist = Gamma(alpha, theta)
+        fwhm(tt_dist, mode(tt_dist); xlims=(0, 100)) - target_fwhm
+    end
+
+    find_zero(_optim, [0.1*target_fwhm^2/mean, 10*target_fwhm^2/mean], A42())
+end
+
+
+
+@kwdef struct PMTConfig{ T<:Real, S <: SPEDistribution{T}, P<:PulseTemplate, U<:PulseTemplate, V<:UnivariateDistribution}
     spe_template::S
     pulse_model::P
     pulse_model_filt::U
@@ -31,18 +49,25 @@ export make_reco_pulses
     sampling_freq::T # Ghz
     unf_pulse_res::T # ns
     adc_freq::T # Ghz
+    tt_dist::V
     lp_filter::ZeroPoleGain{:z, ComplexF64, ComplexF64, Float64}
 
 end
 
-function PMTConfig(st::SPEDistribution, pm::PulseTemplate, snr_db::Real, sampling_freq::Real, unf_pulse_res::Real, adc_freq::Real, lp_cutoff::Real)
+function PMTConfig(st::SPEDistribution, pm::PulseTemplate, snr_db::Real, sampling_freq::Real, unf_pulse_res::Real, adc_freq::Real, lp_cutoff::Real,
+    tt_mean::Real, tt_fwhm::Real)
     mode = get_template_mode(pm)
     designmethod = Butterworth(1)
     lp_filter = digitalfilter(Lowpass(lp_cutoff, fs=sampling_freq), designmethod)
     filtered_pulse = make_filtered_pulse(pm, sampling_freq, (-10.0, 50.), lp_filter)
-    PMTConfig(st, pm, filtered_pulse, mode / 10^(snr_db / 10), sampling_freq, unf_pulse_res, adc_freq, lp_filter)
-end
 
+    tt_theta = calc_gamma_shape_mean_fwhm(tt_mean, tt_fwhm)
+    tt_alpha = tt_mean / tt_theta
+    tt_dist = Gamma(tt_alpha, tt_theta)
+
+
+    PMTConfig(st, pm, filtered_pulse, mode / 10^(snr_db / 10), sampling_freq, unf_pulse_res, adc_freq, tt_dist, lp_filter)
+end
 
 
 STD_PMT_CONFIG = PMTConfig(
@@ -55,22 +80,41 @@ STD_PMT_CONFIG = PMTConfig(
     2.0,
     0.1,
     0.25,
-    0.125
+    0.125,
+    25, # TT mean
+    1.5 # TT FWHM
 )
 
-function resample_simulation(df::AbstractDataFrame )
-    hit_times = df[:, :tres]
-    wsum = sum(df[:, :total_weight])
-    norm_weights = ProbabilityWeights(df[:, :total_weight], wsum)
+function resample_simulation(hit_times, total_weights)
+    wsum = sum(total_weights)
+    norm_weights = ProbabilityWeights(copy(total_weights), wsum)
     nhits = pois_rand(wsum)
-
-    hit_times = sample(hit_times, norm_weights, nhits; replace=false)
+    sample(hit_times, norm_weights, nhits; replace=false)
 end
+
+
+function resample_simulation(df::AbstractDataFrame)
+    resample_simulation(df[:, :hit_times], df[:, :total_weights])
+end
+
+
+function apply_tt(hit_times::AbstractArray{<:Real}, tt_dist::UnivariateDistribution)
+
+    tt = rand(tt_dist, size(hit_times))
+    return hit_times .+ tt
+end
+
+function subtract_mean_tt(hits::AbstractVector{<:Real}, tt_dist::UnivariateDistribution)
+    hits .- mean(tt_dist)
+end
+
 
 
 function make_reco_pulses(results::AbstractDataFrame , pmt_config::PMTConfig=STD_PMT_CONFIG)
     @pipe results |>
       resample_simulation |>
+      apply_tt(_, pmt_config.tt_dist) |>
+      subtract_mean_tt(_, pmt_config.tt_dist) |>
       PulseSeries(_, pmt_config.spe_template, pmt_config.pulse_model) |>
       digitize_waveform(
         _,

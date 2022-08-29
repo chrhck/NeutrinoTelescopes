@@ -4,6 +4,7 @@ using FastGaussQuadrature
 using LinearAlgebra
 using DataStructures
 using Distributions
+using Roots
 
 export fast_linear_interp, transform_integral_range
 export integrate_gauss_quad
@@ -11,6 +12,7 @@ export sph_to_cart, apply_rot, cart_to_sph, rot_to_ez_fast, rot_from_ez_fast, ca
 export CategoricalSetDistribution
 export sample_cherenkov_track_direction
 export rand_gamma
+export fwhm
 
 const GL10 = gausslegendre(10)
 
@@ -290,6 +292,18 @@ function rand_gamma(shape::Real, scale::Real, T::Type{U}=Float64) where {U <: Re
     end
 end
 
+"""
+    fwhm(d::UnivariateDistribution, xmode::Real; xlims=(-20, 20))
+
+Calculate FWHM of a univariate distribution
+"""
+function fwhm(d::UnivariateDistribution, xmode::Real; xlims=(-20, 20))
+    ymode = pdf(d, xmode)
+
+    z0 = find_zero(x -> pdf(d, x) - ymode / 2, (xlims[1], xmode), A42())
+    z1 = find_zero(x -> pdf(d, x) - ymode / 2, (xmode, xlims[2]), A42())
+    return z1 - z0
+end
 
 
 end

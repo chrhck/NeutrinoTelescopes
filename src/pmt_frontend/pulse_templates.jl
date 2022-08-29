@@ -3,13 +3,13 @@ module PulseTemplates
 using Plots
 using Polynomials
 using Distributions
-using Roots
 using DSP
 using Interpolations
 using Base.Iterators
 import Base:@kwdef
 
 using ..SPETemplates
+using ...Utils
 
 export PulseTemplate, PDFPulseTemplate, GumbelPulse, InterpolatedPulse
 export make_pulse_dist, evaluate_pulse_template, make_filtered_pulse
@@ -25,13 +25,7 @@ Fit a polynomial to the relationship between Gumbel width and FWHM
 """
 function fit_gumbel_fwhm_width()
     # find relationship between Gumbel width and FWHM
-    function fwhm(d, xmode)
-        ymode = pdf(d, xmode)
-
-        z0 = find_zero(x -> pdf(d, x) - ymode / 2, (-20, xmode), Bisection())
-        z1 = find_zero(x -> pdf(d, x) - ymode / 2, (xmode, 20), Bisection())
-        return z1 - z0
-    end
+    
 
     widths = 0.5:0.01:5
 
@@ -48,7 +42,7 @@ Abstract type for pulse templates
 """
 abstract type PulseTemplate end
 
-get_template_mode(::PulseTemplate) = error("Not implemented")
+
 
 """
 Abstract type for pulse templates that use a PDF to define the pulse shape
@@ -58,6 +52,7 @@ Abstract type for pulse templates that use a PDF to define the pulse shape
     amplitude::Float64
 end
 
+get_template_mode(::PulseTemplate) = error("Not implemented")
 get_template_mode(p::PDFPulseTemplate) = mode(p.dist)
 get_template_mode(p::PDFPulseTemplate{<: Distributions.Truncated}) = mode(p.dist.untruncated)
 
