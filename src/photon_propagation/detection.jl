@@ -39,13 +39,17 @@ get_pmt_count(det::MultiPMTDetector) = size(det.pmt_coordinates, 2)
 
 check_pmt_hit(::SVector{3, <:Real}, ::DetectionSphere) = 1
 
-function check_pmt_hit(position::SVector{3, <:Real}, target::MultiPMTDetector{<:Real}) 
+function check_pmt_hit(position::SVector{3, <:Real}, target::MultiPMTDetector{<:Real}, orientation::SVector{3, <:Real})
+    
     rel_pos = convert(SVector{3, Float64}, (position .- target.position))
     rel_pos = rel_pos ./ norm(rel_pos)
     pmt_radius = sqrt(target.pmt_area / π) 
     opening_angle = asin(pmt_radius / target.radius)
-    
-    rot_mats = [
+
+    orient_R = calc_rot_matrix(SA[0., 0., 1.], orientation)
+
+    rot_mats = [        
+        orient_R *
         calc_rot_matrix(sph_to_cart(det_θ, det_ϕ), SA[0., 0., 1.])
         for (det_θ, det_ϕ) in eachcol(target.pmt_coordinates)
     ]

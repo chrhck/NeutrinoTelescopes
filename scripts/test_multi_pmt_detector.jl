@@ -10,13 +10,11 @@ using Parquet
 
 distance = 20f0
 medium = make_cascadia_medium_properties(Float32)
-source = PointlikeIsotropicEmitter(SA[0f0, 0f0, 0f0], 0f0, Int64(1E8), CherenkovSpectrum((300f0, 800f0), 50, medium))
 pmt_area=Float32((75e-3 / 2)^2*π)
 target_radius = 0.21f0
-
-
 target = MultiPMTDetector(@SVector[distance, 0f0, 0f0], target_radius, pmt_area, 
     make_pom_pmt_coordinates(Float32))
+
 
 
 
@@ -54,7 +52,9 @@ pmt_pos = [target.position .+ sph_to_cart(col...).* target.radius for col in eac
 scatter!([p[1] for p in pmt_pos], [p[2] for p in pmt_pos], [p[3] for p in pmt_pos],
 ms=3, alpha=0.9, color=:red)
 
-hit_pmts = check_pmt_hit.(positions, Ref(target))
+orientation = sph_to_cart(π/2, 0)
+
+hit_pmts = check_pmt_hit.(positions, Ref(target), Ref(orientation))
 hit_photons = positions[hit_pmts .!= 0]
 
 scatter!([p[1] for p in hit_photons], [p[2] for p in hit_photons], [p[3] for p in hit_photons],

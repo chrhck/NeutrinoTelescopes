@@ -1,10 +1,4 @@
 using NeutrinoTelescopes
-using NeutrinoTelescopes.Modelling
-using NeutrinoTelescopes.PMTFrontEnd
-using NeutrinoTelescopes.Utils
-using NeutrinoTelescopes.Medium
-using NeutrinoTelescopes.Detection
-using NeutrinoTelescopes.EventGeneration 
 using Plots
 using Distributions
 using Random

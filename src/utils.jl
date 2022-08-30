@@ -173,7 +173,7 @@ ssc(v::AbstractVector) = [0 -v[3] v[2]; v[3] 0 -v[1]; -v[2] v[1] 0]
 function calc_rot_matrix(a, b)
      # Rotate a to b and apply to operand
      if a == b
-        return operand
+        return I
     end
 
     cross_ab = cross(a, b)

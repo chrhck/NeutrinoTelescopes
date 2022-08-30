@@ -23,7 +23,7 @@ export resample_simulation
 export STD_PMT_CONFIG, PMTConfig
 export make_reco_pulses
 export calc_gamma_shape_mean_fwhm
-export apply_tt, subtract_mean_tt
+export apply_tt, apply_tt!, subtract_mean_tt, subtract_mean_tt!
 
 
 
@@ -85,17 +85,28 @@ STD_PMT_CONFIG = PMTConfig(
     1.5 # TT FWHM
 )
 
-function resample_simulation(hit_times, total_weights)
+function resample_simulation(hit_times, total_weights, downsample=1.)
     wsum = sum(total_weights)
     norm_weights = ProbabilityWeights(copy(total_weights), wsum)
-    nhits = pois_rand(wsum)
+    nhits = pois_rand(wsum*downsample)
     sample(hit_times, norm_weights, nhits; replace=false)
 end
 
 
-function resample_simulation(df::AbstractDataFrame)
-    resample_simulation(df[:, :hit_times], df[:, :total_weights])
+function resample_simulation(df::AbstractDataFrame, downsample=1., per_pmt=true)
+    
+    
+    wrapped(hit_times, total_weights) = resample_simulation(hit_times, total_weights, downsample)
+    
+    if per_pmt
+        groups = groupby(df, :pmt_id)
+        resampled_hits = combine(groups, [:time, :total_weight] => wrapped => :time)
+    else
+        resampled_hits = combine(df, [:time, :total_weight] => wrapped => :time)
+    end
+    resampled_hits
 end
+
 
 
 function apply_tt(hit_times::AbstractArray{<:Real}, tt_dist::UnivariateDistribution)
@@ -104,8 +115,22 @@ function apply_tt(hit_times::AbstractArray{<:Real}, tt_dist::UnivariateDistribut
     return hit_times .+ tt
 end
 
+
+function apply_tt!(df::AbstractDataFrame, tt_dist::UnivariateDistribution)
+    tt = rand(tt_dist, nrow(df))
+
+    df[!, :time] .+= tt
+    return df
+end
+
+
 function subtract_mean_tt(hits::AbstractVector{<:Real}, tt_dist::UnivariateDistribution)
     hits .- mean(tt_dist)
+end
+
+function subtract_mean_tt!(df::AbstractDataFrame, tt_dist::UnivariateDistribution)
+    df[!, :time] .-= mean(tt_dist)
+    return df
 end
 
 

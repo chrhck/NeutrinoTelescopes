@@ -386,10 +386,10 @@ struct ExtendedCherenkovEmitter{T, N} <: CherenkovEmitter{T}
     long_param::LongitudinalParameterisation{T}
 end
 
-function ExtendedCherenkovEmitter(particle::Particle, medium::MediumProperties, wl_range::Tuple{T, T}) where {T <: Real}
+function ExtendedCherenkovEmitter(particle::Particle, medium::MediumProperties, wl_range::Tuple{T, T}, upsample=1.) where {T <: Real}
 
     long_param = LongitudinalParameterisation(particle.energy, medium, particle.type)
-    photons = pois_rand(total_lightyield(particle, medium, wl_range))
+    photons = pois_rand(total_lightyield(particle, medium, wl_range)*upsample)
     spectrum = CherenkovSpectrum(wl_range, 20, medium)
 
     ExtendedCherenkovEmitter(particle.position, particle.direction, particle.time, photons, spectrum, long_param)

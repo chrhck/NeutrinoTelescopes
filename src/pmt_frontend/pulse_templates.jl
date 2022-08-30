@@ -6,6 +6,7 @@ using Distributions
 using DSP
 using Interpolations
 using Base.Iterators
+using DataFrames
 import Base:@kwdef
 
 using ..SPETemplates
@@ -145,6 +146,12 @@ function PulseSeries(times::AbstractVector{<:Real}, spe_template::SPEDistributio
     charges = rand(spe_d, length(times))
     PulseSeries(times, charges, pulse_shape)
 end
+
+function PulseSeries(df::AbstractDataFrame, spe_template::SPEDistribution, pulse_shape::PulseTemplate)
+    PulseSeries(df[:, :time], spe_template, pulse_shape)
+end
+
+
 
 
 Base.length(ps::PulseSeries) = length(ps.times)
