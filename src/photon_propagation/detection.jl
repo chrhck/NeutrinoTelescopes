@@ -55,11 +55,46 @@ function check_pmt_hit(position::SVector{3, <:Real}, target::MultiPMTDetector{<:
     ]
     for (i, R) in enumerate(rot_mats)
         rel_pos_rot = R * rel_pos
-        if acos(rel_pos_rot[3]) < opening_angle
+        if acos(clamp(rel_pos_rot[3], -1, 1)) < opening_angle
             return i
         end
     end
     return 0
+end
+
+function check_pmt_hits(
+    positions::U,
+    target::MultiPMTDetector{<:Real},
+    orientation::SVector{3, <:Real}) where {T <: SVector{3, <:Real}, U <: AbstractVector{T} }
+    
+    orient_R = calc_rot_matrix(SA[0., 0., 1.], orientation)
+    pmt_radius = sqrt(target.pmt_area / π) 
+    opening_angle = asin(pmt_radius / target.radius)
+
+    rot_mats = [        
+        orient_R *
+        calc_rot_matrix(sph_to_cart(det_θ, det_ϕ), SA[0., 0., 1.])
+        for (det_θ, det_ϕ) in eachcol(target.pmt_coordinates)
+    ]
+
+    pmt_ids = zeros(Int64, length(positions))
+
+    for (i, pos) in enumerate(positions)
+    
+    
+        rel_pos = convert(SVector{3, Float64}, (pos .- target.position))
+        rel_pos = rel_pos ./ norm(rel_pos)
+   
+    
+        for (j, R) in enumerate(rot_mats)
+            rel_pos_rot = R * rel_pos
+            if acos(clamp(rel_pos_rot[3], -1, 1)) < opening_angle
+                pmt_ids[i] = j
+                break 
+            end
+        end
+    end
+    pmt_ids
 end
 
 

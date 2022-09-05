@@ -8,78 +8,85 @@ using StatsPlots
 using Distributions
 using Parquet
 
-distance = 20f0
-medium = make_cascadia_medium_properties(Float32)
-pmt_area=Float32((75e-3 / 2)^2*π)
-target_radius = 0.21f0
-target = MultiPMTDetector(@SVector[distance, 0f0, 0f0], target_radius, pmt_area, 
-    make_pom_pmt_coordinates(Float32))
-
-
-
-
-nph = 10000
-rthetas = acos.(2 .* rand(nph) .- 1)
-rphis = 2*π .* rand(nph)
-
-positions = target.radius .* sph_to_cart.(rthetas, rphis) .+ [target.position]
-
-
-function draw_greatcircle!(zenith, p, target)
-    points = sph_to_cart.(Ref(deg2rad(zenith)), 0:0.01:2*π)
-    points = apply_rot.(Ref([0., 0., 1.]), Ref([1., 0., 0.]), points)
-    points = target.radius .* points .+ [target.position]
-
-
-    p = scatter!(p, [p[1] for p in points], [p[2] for p in points], [p[3] for p in points],
-    ms=0.1, alpha=1.0, color=:blue)
-    p
-end
-
-p = scatter([p[1] for p in positions], [p[2] for p in positions], [p[3] for p in positions],
-ms=0.1, alpha=0.5)
-
-p = plot()
-
-p = draw_greatcircle!(90-57.5, p, target)
-p = draw_greatcircle!(90-25, p, target)
-
-p = draw_greatcircle!(90+57.5, p, target)
-p = draw_greatcircle!(90+25, p, target)
-
-pmt_pos = [target.position .+ sph_to_cart(col...).* target.radius for col in eachcol(target.pmt_coordinates)]
-
-scatter!([p[1] for p in pmt_pos], [p[2] for p in pmt_pos], [p[3] for p in pmt_pos],
-ms=3, alpha=0.9, color=:red)
-
-orientation = sph_to_cart(π/2, 0)
-
-hit_pmts = check_pmt_hit.(positions, Ref(target), Ref(orientation))
-hit_photons = positions[hit_pmts .!= 0]
-
-scatter!([p[1] for p in hit_photons], [p[2] for p in hit_photons], [p[3] for p in hit_photons],
-ms=0.5, alpha=0.9, color=:red)
-
 
 zenith_angle = 20f0
 azimuth_angle = 10f0
+pmt_area=Float32((75e-3 / 2)^2*π)
+target_radius = 0.21f0
 
-pdir = sph_to_cart(deg2rad(zenith_angle), deg2rad(azimuth_angle))
-
+medium = make_cascadia_medium_properties(Float32)
 particle = Particle(
         @SVector[0.0f0, 0f0, 0.0f0],
-        pdir,
+        sph_to_cart(deg2rad(zenith_angle), deg2rad(azimuth_angle)),
         0f0,
         Float32(1E5),
         PEMinus
 )
 
-prop_source = ExtendedCherenkovEmitter(particle, medium, (300f0, 800f0))
+distances = 5:10:100
+distance = 10f0
 
-res, nph_sim = propagate_photons(prop_source, target, medium)
-res = make_hits_from_photons(res, source, target, medium)
-groups = groupby(res, :pmt_id)
-resampled_hits = combine(groups, [:time, :total_weight] => resample_simulation => :time)
+target = MultiPMTDetector(@SVector[distance, 0f0, 0f0], target_radius, pmt_area, 
+make_pom_pmt_coordinates(Float32))
+
+prop_source = PointlikeCherenkovEmitter(particle, medium, Int64(1E10), (300f0, 800f0))
+photons = propagate_photons(prop_source, target, medium)
+
+p = plot()
+
+coszen = rand(Uniform(-1, 1))
+phi = rand(Uniform(0, 2*π))
+
+orientation = sph_to_cart(acos(coszen), phi)
+@profview hits = make_hits_from_photons(photons, prop_source, target, medium, orientation)
+
+methods(check_pmt_hits)
+
+
+@profview for i in 1:10
+    coszen = rand(Uniform(-1, 1))
+    phi = rand(Uniform(0, 2*π))
+
+    orientation = sph_to_cart(acos(coszen), phi)
+    hits = make_hits_from_photons(photons, prop_source, target, medium, orientation)
+
+    groups = groupby(hits, :pmt_id)
+
+    expec_per_pmt = combine(groups, :total_weight => sum => :expec_per_pmt, nrow => :nhits)
+    expec_per_pmt[:, :nhits] / expec_per_pmt[:, :expec_per_pmt]
+    expec_per_pmt[!, :weight_ratio] = expec_per_pmt[:, :nhits] ./ expec_per_pmt[:, :expec_per_pmt] 
+
+    p = plot!(p, expec_per_pmt[:, :nhits], yscale=:log10)
+end
+p
+
+plot(expec_per_pmt[:, :weight_ratio])
+
+ids = Set(expec_per_pmt[:, :pmt_id])
+
+for i in 1:16
+    if !(i in ids)
+        push!(expec_per_pmt, (pmt_id=>i, expec_per_pmt=>0))
+    end
+end
+
+
+#
+for distance in distances
+
+    target = MultiPMTDetector(@SVector[distance, 0f0, 0f0], target_radius, pmt_area, 
+        make_pom_pmt_coordinates(Float32))
+
+    prop_source = PointlikeCherenkovEmitter(particle, medium, Int64(1E12), (300f0, 800f0))
+
+    res, nph_sim = propagate_photons(prop_source, target, medium)
+    res = make_hits_from_photons(res, source, target, medium)
+    groups = groupby(res, :pmt_id)
+
+    expec_per_pmt = combine(groups, :total_weight => sum => :expec_per_pmt)
+
+
+    #resampled_hits = combine(groups, [:time, :total_weight] => resample_simulation => :time)
 resampled_hits
 
 write_parquet("test_event.parquet", resampled_hits)
@@ -94,7 +101,6 @@ histogram!(tres_tt, weights=groups[5][:, :total_weight], xlim=(-10, 100), bins=-
 rs = resample_simulation(groups[5])
 
 
-f
 
 histogram!(rs, bins=-10:1:20, alpha=0.7)
 

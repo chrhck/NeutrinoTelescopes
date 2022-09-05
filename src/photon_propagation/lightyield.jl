@@ -386,10 +386,14 @@ struct ExtendedCherenkovEmitter{T, N} <: CherenkovEmitter{T}
     long_param::LongitudinalParameterisation{T}
 end
 
-function ExtendedCherenkovEmitter(particle::Particle, medium::MediumProperties, wl_range::Tuple{T, T}, upsample=1.) where {T <: Real}
+function ExtendedCherenkovEmitter(
+    particle::Particle,
+    medium::MediumProperties,
+    wl_range::Tuple{T, T},
+    ) where {T <: Real}
 
     long_param = LongitudinalParameterisation(particle.energy, medium, particle.type)
-    photons = pois_rand(total_lightyield(particle, medium, wl_range)*upsample)
+    photons = pois_rand(total_lightyield(particle, medium, wl_range))
     spectrum = CherenkovSpectrum(wl_range, 20, medium)
 
     ExtendedCherenkovEmitter(particle.position, particle.direction, particle.time, photons, spectrum, long_param)
@@ -403,8 +407,21 @@ struct PointlikeCherenkovEmitter{T, N} <: CherenkovEmitter{T}
     spectrum::CherenkovSpectrum{T, N}
 end
 
-function PointlikeCherenkovEmitter(particle::Particle, medium::MediumProperties, wl_range::Tuple{T, T}) where {T<:Real}
+function PointlikeCherenkovEmitter(
+    particle::Particle,
+    medium::MediumProperties,
+    wl_range::Tuple{T, T}) where {T<:Real}
+
     photons = pois_rand(total_lightyield(particle, medium, wl_range))
+    spectrum = CherenkovSpectrum(wl_range, 20, medium)
+    PointlikeCherenkovEmitter(particle.position, particle.direction, particle.time, photons, spectrum)
+end
+
+function PointlikeCherenkovEmitter(
+    particle::Particle,
+    medium::MediumProperties,
+    photons::Integer,
+    wl_range::Tuple{T, T}) where {T<:Real}
     spectrum = CherenkovSpectrum(wl_range, 20, medium)
     PointlikeCherenkovEmitter(particle.position, particle.direction, particle.time, photons, spectrum)
 end

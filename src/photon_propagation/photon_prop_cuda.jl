@@ -831,7 +831,7 @@ end
 function make_hits_from_photons(df::AbstractDataFrame , source::PhotonSource, target::PhotonTarget, medium::MediumProperties, target_orientation::SVector{3, T}) where {T<:Real}
     
 
-    df[:, :pmt_id] = check_pmt_hit.(df[:, :position], Ref(target), Ref(target_orientation))
+    df[:, :pmt_id] = check_pmt_hit(df[:, :position], target, target_orientation)
     
     df = subset(df, :pmt_id => x -> x .> 0)
 
