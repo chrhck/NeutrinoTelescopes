@@ -6,7 +6,7 @@ using Interpolations
 using Unitful
 using LinearAlgebra
 using Base.Iterators
-
+using JSON
 using ...Utils
 
 
@@ -34,6 +34,12 @@ struct MultiPMTDetector{T<:Real, N, L} <: PhotonTarget{T}
     pmt_coordinates::SMatrix{2, N, T, L}
 end
 
+JSON.lower(d::MultiPMTDetector) = Dict(
+    "pos"=>d.position,
+    "radius"=>d.radius,
+    "pmt_area"=>d.pmt_area,
+    "pmt_coordinates"=>d.pmt_coordinates)
+
 get_pmt_count(det::DetectionSphere) = 1
 get_pmt_count(det::MultiPMTDetector) = size(det.pmt_coordinates, 2)
 
@@ -41,60 +47,57 @@ check_pmt_hit(::SVector{3, <:Real}, ::DetectionSphere) = 1
 
 function check_pmt_hit(position::SVector{3, <:Real}, target::MultiPMTDetector{<:Real}, orientation::SVector{3, <:Real})
     
-    rel_pos = convert(SVector{3, Float64}, (position .- target.position))
-    rel_pos = rel_pos ./ norm(rel_pos)
+    orient_R = calc_rot_matrix(SA[0., 0., 1.], orientation)
+    pmt_positions::Vector{SVector{3, eltype(target.pmt_coordinates)}} = [
+        orient_R * sph_to_cart(det_θ, det_ϕ) 
+        for (det_θ, det_ϕ) in eachcol(target.pmt_coordinates)
+    ]
+ 
     pmt_radius = sqrt(target.pmt_area / π) 
     opening_angle = asin(pmt_radius / target.radius)
 
-    orient_R = calc_rot_matrix(SA[0., 0., 1.], orientation)
+    tpos = convert(SVector{3, Float64}, target.position)
+    rel_pos = position - tpos
+    rel_pos = rel_pos / norm(rel_pos)
 
-    rot_mats = [        
-        orient_R *
-        calc_rot_matrix(sph_to_cart(det_θ, det_ϕ), SA[0., 0., 1.])
-        for (det_θ, det_ϕ) in eachcol(target.pmt_coordinates)
-    ]
-    for (i, R) in enumerate(rot_mats)
-        rel_pos_rot = R * rel_pos
-        if acos(clamp(rel_pos_rot[3], -1, 1)) < opening_angle
+    for (i, pmtpos) in enumerate(pmt_positions)
+        if acos(dot(rel_pos, pmtpos)) < opening_angle
             return i
         end
     end
     return 0
 end
 
-function check_pmt_hits(
+function check_pmt_hit(
     positions::U,
     target::MultiPMTDetector{<:Real},
     orientation::SVector{3, <:Real}) where {T <: SVector{3, <:Real}, U <: AbstractVector{T} }
     
     orient_R = calc_rot_matrix(SA[0., 0., 1.], orientation)
+    pmt_positions::Vector{SVector{3, eltype(target.pmt_coordinates)}} = [
+        orient_R * sph_to_cart(det_θ, det_ϕ) 
+        for (det_θ, det_ϕ) in eachcol(target.pmt_coordinates)
+    ]
+ 
     pmt_radius = sqrt(target.pmt_area / π) 
     opening_angle = asin(pmt_radius / target.radius)
 
-    rot_mats = [        
-        orient_R *
-        calc_rot_matrix(sph_to_cart(det_θ, det_ϕ), SA[0., 0., 1.])
-        for (det_θ, det_ϕ) in eachcol(target.pmt_coordinates)
-    ]
-
+    tpos = convert(SVector{3, Float64}, target.position)
     pmt_ids = zeros(Int64, length(positions))
 
     for (i, pos) in enumerate(positions)
-    
-    
-        rel_pos = convert(SVector{3, Float64}, (pos .- target.position))
-        rel_pos = rel_pos ./ norm(rel_pos)
-   
-    
-        for (j, R) in enumerate(rot_mats)
-            rel_pos_rot = R * rel_pos
-            if acos(clamp(rel_pos_rot[3], -1, 1)) < opening_angle
+        rel_pos = pos - tpos
+        rel_pos = rel_pos / norm(rel_pos)
+
+        for (j, pmtpos) in enumerate(pmt_positions)
+            if acos(clamp(dot(rel_pos, pmtpos), -1., 1.)) < opening_angle
                 pmt_ids[i] = j
-                break 
+                break
             end
         end
     end
     pmt_ids
+
 end
 
 

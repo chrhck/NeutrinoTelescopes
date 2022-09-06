@@ -7,58 +7,85 @@ using DataFrames
 using StatsPlots
 using Distributions
 using Parquet
-
-
-zenith_angle = 20f0
-azimuth_angle = 10f0
-pmt_area=Float32((75e-3 / 2)^2*π)
-target_radius = 0.21f0
+using ProgressLogging
+using Formatting
+using JSON
+using Arrow
 
 medium = make_cascadia_medium_properties(Float32)
-particle = Particle(
-        @SVector[0.0f0, 0f0, 0.0f0],
-        sph_to_cart(deg2rad(zenith_angle), deg2rad(azimuth_angle)),
-        0f0,
-        Float32(1E5),
-        PEMinus
-)
-
-distances = 5:10:100
+pmt_area=Float32((75e-3 / 2)^2*π)
+target_radius = 0.21f0
 distance = 10f0
 
-target = MultiPMTDetector(@SVector[distance, 0f0, 0f0], target_radius, pmt_area, 
-make_pom_pmt_coordinates(Float32))
-
-prop_source = PointlikeCherenkovEmitter(particle, medium, Int64(1E10), (300f0, 800f0))
-photons = propagate_photons(prop_source, target, medium)
-
-p = plot()
-
-coszen = rand(Uniform(-1, 1))
-phi = rand(Uniform(0, 2*π))
-
-orientation = sph_to_cart(acos(coszen), phi)
-@profview hits = make_hits_from_photons(photons, prop_source, target, medium, orientation)
-
-methods(check_pmt_hits)
+target = MultiPMTDetector(
+    @SVector[distance, 0f0, 0f0],
+    target_radius,
+    pmt_area, 
+    make_pom_pmt_coordinates(Float32)
+    )
 
 
-@profview for i in 1:10
-    coszen = rand(Uniform(-1, 1))
-    phi = rand(Uniform(0, 2*π))
 
-    orientation = sph_to_cart(acos(coszen), phi)
-    hits = make_hits_from_photons(photons, prop_source, target, medium, orientation)
 
-    groups = groupby(hits, :pmt_id)
 
-    expec_per_pmt = combine(groups, :total_weight => sum => :expec_per_pmt, nrow => :nhits)
-    expec_per_pmt[:, :nhits] / expec_per_pmt[:, :expec_per_pmt]
-    expec_per_pmt[!, :weight_ratio] = expec_per_pmt[:, :nhits] ./ expec_per_pmt[:, :expec_per_pmt] 
+outdir = "/home/chrhck/data/sim/photon_prop/multi_pmt"
 
-    p = plot!(p, expec_per_pmt[:, :nhits], yscale=:log10)
+dfs = []
+sim_params = []
+
+@progress "Photon sims" for i in 1:10
+    dir_costheta = rand(Uniform(-1, 1))
+    dir_phi = rand(Uniform(0, 2*π))
+    direction::SVector{3, Float32} = sph_to_cart(acos(dir_costheta), dir_phi)
+    
+    particle = Particle(
+            @SVector[0.0f0, 0f0, 0.0f0],
+            direction,
+            0f0,
+            Float32(1E5),
+            PEMinus
+    )
+
+    n_photons::Int64 = 1E10
+    prop_source = PointlikeCherenkovEmitter(particle, medium, n_photons, (300f0, 800f0))
+    photons = propagate_photons(prop_source, target, medium)
+
+    Arrow.write(
+        joinpath(outdir, format("photons_{:d}", i)),
+        photons;
+        metadata=["target" => json(target), "source" => json(prop_source)])
+    #=
+    @progress "Resampling" for j in 1:10
+        coszen_orient = rand(Uniform(-1, 1))
+        phi_orient = rand(Uniform(0, 2*π))
+
+        orientation = sph_to_cart(acos(coszen_orient), phi_orient,)
+        hits = make_hits_from_photons(photons, prop_source, target, medium, orientation)
+
+        push!(dfs, hits)
+        push!(sim_params, (distance, dir_costheta, dir_phi, coszen_orient, phi_orient))
+    end
+    =#
 end
-p
+   
+
+
+groups = groupby(hits, :pmt_id)
+
+expec_per_pmt = combine(groups, :total_weight => sum => :expec_per_pmt, nrow => :nhits)
+npmts = get_pmt_count(target)
+
+
+expec_per_pmt = rightjoin(expec_per_pmt, DataFrame(pmt_id=1:get_pmt_count(target), rel_angle=cos_rel_angles), on=:pmt_id)
+expec_per_pmt[!, :weight_ratio] = expec_per_pmt[:, :nhits] ./ expec_per_pmt[:, :expec_per_pmt] 
+push!(dfs, expec_per_pmt)
+end
+
+
+all_dfs = vcat(dfs...)
+
+
+@df all_dfs scatter(:rel_angle, :nhits)
 
 plot(expec_per_pmt[:, :weight_ratio])
 

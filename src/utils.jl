@@ -171,15 +171,16 @@ ssc(v::AbstractVector) = [0 -v[3] v[2]; v[3] 0 -v[1]; -v[2] v[1] 0]
 
 
 function calc_rot_matrix(a, b)
-     # Rotate a to b and apply to operand
-     if a == b
-        return I
+    # Rotate a to b and apply to operand
+    I3 = SMatrix{3,3}(I)
+    if a == b
+        return I3
     end
 
     cross_ab = cross(a, b)
     ssc_cross_ab = ssc(cross_ab)
 
-    R = I + ssc_cross_ab + ssc_cross_ab^2 * (1-dot(a, b)) / norm(cross_ab)^2
+    R = SMatrix{3,3}(I) + ssc_cross_ab + ssc_cross_ab^2 * (1-dot(a, b)) / norm(cross_ab)^2
 end
 
 

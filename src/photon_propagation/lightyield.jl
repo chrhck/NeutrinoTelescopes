@@ -24,6 +24,7 @@ using Unitful
 using PoissonRandom
 using Interpolations
 using PoissonRandom
+using JSON
 
 
 using ..Spectral
@@ -138,6 +139,8 @@ const LongitudinalParametersGamma = LongitudinalParameters(alpha=2.83923, beta=1
     b::T
     lrad::T
 end
+
+JSON.lower(p::LongitudinalParameterisation) = [p.a, p.b, p.lrad]
 
 function LongitudinalParameterisation(energy::T, medium::MediumProperties, long_pars::LongitudinalParameters) where {T <:Real}
     b = T(long_parameter_b_edep(energy, long_pars))
@@ -371,10 +374,18 @@ struct PointlikeIsotropicEmitter{T, U<:Spectrum} <: PhotonSource{T}
     spectrum::U
 end
 
+
 function PointlikeIsotropicEmitter(position::SVector{3, T}, time::T, photons::Int64, medium::MediumProperties, wl_range::Tuple{T, T}) where {T<:Real}
     spectrum = CherenkovSpectrum(wl_range, 20, medium)
     PointlikeIsotropicEmitter(position, time, photons, spectrum)
 end
+
+JSON.lower(e::PointlikeIsotropicEmitter) = Dict(
+    "position" => e.position,
+    "time" => e.time,
+    "photons" => e.photons,
+    "wl_range" => e.spectrum.wl_range,
+)
 
 
 struct ExtendedCherenkovEmitter{T, N} <: CherenkovEmitter{T}
@@ -398,6 +409,16 @@ function ExtendedCherenkovEmitter(
 
     ExtendedCherenkovEmitter(particle.position, particle.direction, particle.time, photons, spectrum, long_param)
 end
+
+JSON.lower(e::ExtendedCherenkovEmitter) = Dict(
+    "position" => e.position,
+    "direction" => e.direction,
+    "time" => e.time,
+    "photons" => e.photons,
+    "wl_range" => e.spectrum.wl_range,
+    "long_param" => e.long_param,
+)
+
 
 struct PointlikeCherenkovEmitter{T, N} <: CherenkovEmitter{T}
     position::SVector{3,T}
@@ -426,7 +447,13 @@ function PointlikeCherenkovEmitter(
     PointlikeCherenkovEmitter(particle.position, particle.direction, particle.time, photons, spectrum)
 end
 
-
+JSON.lower(e::PointlikeCherenkovEmitter) = Dict(
+    "position" => e.position,
+    "direction" => e.direction,
+    "time" => e.time,
+    "photons" => e.photons,
+    "wl_range" => e.spectrum.wl_range,
+)
 
 
 
