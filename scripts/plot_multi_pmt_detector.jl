@@ -49,7 +49,7 @@ p = scatter([p[1] for p in pmt_pos], [p[2] for p in pmt_pos], [p[3] for p in pmt
 ms=3, alpha=0.9, color=:red)
 draw_pmt_great_circles(p)
 
-orientation = sph_to_cart(π/2, 0)
+orientation = sph_to_cart(0, 0)
 
 hit_pmts = check_pmt_hit.(positions, Ref(target), Ref(orientation))
 hit_photons = positions[hit_pmts .!= 0]
