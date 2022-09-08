@@ -47,18 +47,18 @@ global c_vac_m_ns = ustrip(u"m/ns", SpeedOfLightInVacuum)
 
 
 function get_dir_reweight(em_dir::SVector{3, T}, shower_axis::SVector{3, U}, ref_ix::T) where {T<:Real, U<:Real}
-    # Assume that source-target direction is e_z    
+    # Assume that source-target direction is e_z
     rot_ph_dir = rot_to_ez_fast(shower_axis, em_dir)
 
     ph_cos_theta = rot_ph_dir[3]
     norm = cherenkov_ang_dist_int(ref_ix) .* 2
-    
+
     cherenkov_ang_dist(ph_cos_theta, ref_ix) / norm
 end
 
 
 function fit_photon_dist(obs_photon_df, n_ph_gen)
-   
+
     ph_abs_weight = obs_photon_df[:, :abs_weight]
     ph_tres = obs_photon_df[:, :tres]
 
@@ -90,9 +90,9 @@ function fit_photon_dist(obs_photon_df, n_ph_gen)
         =#
         return (NaN, NaN, NaN)
     end
-    
-    
-    
+
+
+
 
 end
 
@@ -117,7 +117,7 @@ function make_photon_fits(n_photons_per_dist::Int64, max_nph_det::Int64, n_dista
         distance=Float64[]
         )
 
-    
+
 
     @progress name = "Propagating photons" for dist in distances
         obs_angles = reduce(hcat, next!(s) for i in 1:n_angles)
@@ -129,7 +129,7 @@ function make_photon_fits(n_photons_per_dist::Int64, max_nph_det::Int64, n_dista
             nph_this = n_photons_per_dist
             prop_res = nothing
             nph_sim = nothing
-            
+
             while true
                 source = PointlikeCherenkovEmitter(SA[0f0, 0f0, 0f0], direction, 0f0, nph_this, CherenkovSpectrum((300f0, 800f0), 40, medium))
                 prop_res, nph_sim = propagate_source(source, dist, medium)
@@ -157,7 +157,7 @@ function make_photon_fits(n_photons_per_dist::Int64, max_nph_det::Int64, n_dista
             end
 
             fit_result = fit_photon_dist(prop_res, nph_sim)
-    
+
             if fit_result[1] != NaN
                 push!(results_fit, (fit_alpha=fit_result[1], fit_theta=fit_result[2], det_fraction=fit_result[3], obs_angle=obs_angle, distance=dist))
             end
@@ -183,7 +183,7 @@ end
 struct NoSchedule{T<:Number} <: AbstractSchedule{false}
     λ::T
 end
-(schedule::NoSchedule)(t) = schedule.λ 
+(schedule::NoSchedule)(t) = schedule.λ
 
 
 make_scheduler(pars::NoSchedulePars) = NoSchedule(pars.learning_rate)
@@ -193,7 +193,7 @@ make_scheduler(pars::SinDecaySchedulePars) = SinDecay2(λ0=pars.lr_min, λ1=pars
 Base.@kwdef mutable struct Hyperparams
     data_file::String
     batch_size::Int64
-    lr_schedule_pars::LRScheduleParams 
+    lr_schedule_pars::LRScheduleParams
     epochs::Int64
     width::Int64
     dropout_rate::Float64
@@ -309,7 +309,7 @@ function train_mlp(; kws...)
     model = gpu(model)
     loss(x, y) = mse(model(x), y)
     optimiser = ADAM()
-    schedule = make_scheduler(args.lr_schedule_pars) 
+    schedule = make_scheduler(args.lr_schedule_pars)
 
 
     if args.tblogger
@@ -411,14 +411,14 @@ function evaluate_model(
     log10_max_dist = log10(max_dist)
 
     mask = (inputs[1, :] .<= log10_max_dist) .&& (inputs[1, :] .>= 0)
-    
+
     predictions::Matrix{Float32} = cpu(model(gpu(inputs)))
     Modelling.transform_model_output!(predictions, trafos)
 
     predictions_rshp = reshape(predictions, (3, size(sources, 1), size(targets, 1)))
-    
-    predictions_rshp[3, :, :] = mapslices(slice -> slice .* area_acceptance.(targets), predictions_rshp[3, :, :], dims=2) 
-    
+
+    predictions_rshp[3, :, :] = mapslices(slice -> slice .* area_acceptance.(targets), predictions_rshp[3, :, :], dims=2)
+
     mask_rshp = reshape(mask, (length(sources), length(targets)))
 
     #=
@@ -457,7 +457,7 @@ function shape_mixture_per_module(
 
     probs[.!mask] .= 0
 
-    c_ph = (c_vac_m_ns / get_refractive_index(800.0f0, medium))
+    c_ph = (c_vac_m_ns / refractive_index(800.0f0, medium))
 
     @inbounds for i in 1:n_targets
         if any(probs[:, i] .> 0)
@@ -495,7 +495,7 @@ function poisson_dist_per_module(
     if size(mask) != size(params)[2:3]
         error("Mask has length $(length(mask)), expected: $(n_sources * n_targets)")
     end
-        
+
     pred = [sum([params[3, i, j] * sources[i].photons for i in 1:n_sources if mask[i, j]]) for j in 1:n_targets]
 
     Poisson.(pred)

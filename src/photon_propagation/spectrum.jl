@@ -41,7 +41,7 @@ Returned number is in units m^-1.
 """
 function frank_tamm_norm(wl_range::Tuple{T,T}, ref_index_func::Function) where {T<:Real}
     f(x) = frank_tamm(x, ref_index_func(x))
-    integrate_gauss_quad(f, wl_range[1], wl_range[2]) * T(1E9) 
+    integrate_gauss_quad(f, wl_range[1], wl_range[2]) * T(1E9)
 end
 
 
@@ -58,11 +58,11 @@ function frank_tamm_inverted_cdf(wl_range::Tuple{T,T}, medium::MediumProperties,
     norms = Vector{T}(undef, size(wl_steps, 1))
     norms[1] = 0
 
-    full_norm = frank_tamm_norm(wl_range, wl -> get_refractive_index(wl, medium))
+    full_norm = frank_tamm_norm(wl_range, wl -> refractive_index(wl, medium))
 
     for i in 2:size(wl_steps, 1)
         step = wl_steps[i]
-        norms[i] = frank_tamm_norm((wl_range[1], step), wl -> get_refractive_index(wl, medium)) / full_norm
+        norms[i] = frank_tamm_norm((wl_range[1], step), wl -> refractive_index(wl, medium)) / full_norm
     end
 
     sorting = sortperm(norms)
@@ -104,5 +104,3 @@ struct CherenkovSpectrum{T<:Real,N} <: Spectrum
 end
 
 end
-
-

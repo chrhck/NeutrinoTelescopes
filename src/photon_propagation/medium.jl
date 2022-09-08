@@ -6,8 +6,8 @@ using PhysicalConstants.CODATA2018
 using ...Utils
 
 export make_cascadia_medium_properties
-export salinity, pressure, temperature, vol_conc_small_part, vol_conc_large_part, radiation_length, density
-export get_refractive_index, get_scattering_length, get_absorption_length, get_dispersion, get_group_velocity, get_cherenkov_angle
+export salinity, pressure, temperature, vol_conc_small_part, vol_conc_large_part, radiation_length, material_density
+export refractive_index, scattering_length, absorption_length, dispersion, group_velocity, cherenkov_angle
 export MediumProperties, WaterProperties
 
 @unit ppm "ppm" Partspermillion 1 // 1000000 false
@@ -15,27 +15,81 @@ Unitful.register(Medium)
 
 const c_vac_m_ns = ustrip(u"m/ns", SpeedOfLightInVacuum)
 
-abstract type MediumProperties{T} end
+"""
+    DIPPR105Params
+
+Parameters for the DIPPR105 formula
+"""
+@kwdef struct DIPPR105Params
+    A::Float64
+    B::Float64
+    C::Float64
+    D::Float64
+end
+
+# DIPR105 Parameters from DDB
+const DDBDIPR105Params = DIPPR105Params(A=0.14395, B=0.0112, C=649.727, D=0.05107)
+
+"""
+    DIPPR105(temperature::Real, params::DIPPR105Params=DDBDIPR105Params)
+
+Use DPPIR105 formula to calculate water density as function of temperature.
+temperature in K.
+
+Reference: http://ddbonline.ddbst.de/DIPPR105DensityCalculation/DIPPR105CalculationCGI.exe?component=Water
+
+Returns density in kg/m^3
+"""
+function DIPPR105(temperature::Real, params::DIPPR105Params=DDBDIPR105Params)
+    return params.A / (params.B^(1 + (1 - temperature / params.C)^params.D))
+end
+
+
+
+abstract type MediumProperties{T<:Real} end
 
 
 """
-    WaterProperties(salinity, presure, temperature, vol_conc_small_part, vol_conc_large_part)
+    WaterProperties{T<:Real} <: MediumProperties{T}
 
 Properties for a water-like medium. Use unitful constructor to create a value of this type.
+
+### Fields:
+-salinity -- Salinity (permille)
+-pressure -- Pressure (atm)
+-temperature -- Temperature (°C)
+-vol_conc_small_part -- Volumetric concentrations of small particles (ppm)
+-vol_conc_large_part -- Volumetric concentrations of large particles (ppm)
+-radiation_length -- Radiation length (g/cm^2)
+-density -- Density (kg/m^3)
 """
-struct WaterProperties{T} <: MediumProperties{T}
+struct WaterProperties{T<:Real} <: MediumProperties{T}
     salinity::T # permille
     pressure::T # atm
     temperature::T #°C
     vol_conc_small_part::T # ppm
     vol_conc_large_part::T # ppm
     radiation_length::T # g / cm^2
-    density::T
-    _quan_fry_params::Tuple{T, T, T, T}
-    
+    density::T # kg/m^3
+    quan_fry_params::Tuple{T, T, T, T}
 
     WaterProperties(::T, ::T, ::T, ::T, ::T, ::T, ::T, ::Tuple{T, T, T, T}) where {T} = error("Use unitful constructor")
 
+    @doc """
+            function WaterProperties(
+                salinity::Unitful.Quantity{T},
+                pressure::Unitful.Quantity{T},
+                temperature::Unitful.Quantity{T},
+                vol_conc_small_part::Unitful.Quantity{T},
+                vol_conc_large_part::Unitful.Quantity{T},
+                radiation_length::Unitful.Quantity{T}
+            ) where {T<:Real}
+        Construct a `WaterProperties` type.
+
+        The constructor uses DIPPR105 to calculate the density at the given temperature.
+        Parameters for the Quan-Fry parametrisation of the refractive index are calculated
+        for the given salinity, temperature and pressure.
+    """
     function WaterProperties(
         salinity::Unitful.Quantity{T},
         pressure::Unitful.Quantity{T},
@@ -43,11 +97,11 @@ struct WaterProperties{T} <: MediumProperties{T}
         vol_conc_small_part::Unitful.Quantity{T},
         vol_conc_large_part::Unitful.Quantity{T},
         radiation_length::Unitful.Quantity{T}
-    ) where {T}
+    ) where {T<:Real}
         salinity = ustrip(T, u"permille", salinity)
         temperature = ustrip(T, u"°C", temperature)
         pressure = ustrip(T, u"atm", pressure)
-        quan_fry_params = _get_quan_fry_params(salinity, temperature, pressure)
+        quan_fry_params = _calc_quan_fry_params(salinity, temperature, pressure)
         density = DIPPR105(temperature + 273.15)
 
         new{T}(
@@ -63,7 +117,11 @@ struct WaterProperties{T} <: MediumProperties{T}
     end
 end
 
-make_cascadia_medium_properties(T::Type) = WaterProperties(
+"""
+    make_cascadia_medium_properties(::Type{T}) where {T<:Real}
+Construct `WaterProperties` with properties from Cascadia Basin of numerical type `T`.
+"""
+make_cascadia_medium_properties(::Type{T}) where {T<:Real} = WaterProperties(
     T(34.82)u"permille",
     T(269.44088)u"bar",
     T(1.8)u"°C",
@@ -71,27 +129,6 @@ make_cascadia_medium_properties(T::Type) = WaterProperties(
     T(0.0075)u"ppm",
     T(36.08)u"g/cm^2")
 
-
-
-@kwdef struct DIPPR105Params
-    A::Float64
-    B::Float64
-    C::Float64
-    D::Float64
-end
-
-# http://ddbonline.ddbst.de/DIPPR105DensityCalculation/DIPPR105CalculationCGI.exe?component=Water
-const DDBDIPR105Params = DIPPR105Params(A=0.14395, B=0.0112, C=649.727, D=0.05107)
-
-"""
-    DIPPR105(temperature::Real, params::DIPPR105Params=DDBDIPR105Params)
-
-Use DPPIR105 formula to calculate water density as function of temperature.
-temperature in K
-
-Returns density in kg/m^3
-"""
-DIPPR105(temperature::Real, params::DIPPR105Params=DDBDIPR105Params) = params.A / (params.B^(1 + (1 - temperature / params.C)^params.D))
 
 salinity(::T) where {T<:MediumProperties} = error("Not implemented for $T")
 salinity(x::WaterProperties) = x.salinity
@@ -102,8 +139,8 @@ pressure(x::WaterProperties) = x.pressure
 temperature(::T) where {T<:MediumProperties} = error("Not implemented for $T")
 temperature(x::WaterProperties) = x.temperature
 
-density(::T) where {T<:MediumProperties} = error("Not implemented for $T")
-density(x::WaterProperties) = x.density
+material_density(::T) where {T<:MediumProperties} = error("Not implemented for $T")
+material_density(x::WaterProperties) = x.density
 
 vol_conc_small_part(::T) where {T<:MediumProperties} = error("Not implemented for $T")
 vol_conc_small_part(x::WaterProperties) = x.vol_conc_small_part
@@ -117,12 +154,12 @@ radiation_length(x::WaterProperties) = x.radiation_length
 
 
 """
-    _get_quan_fry_params(salinity::Real, temperature::Real, pressure::Real)
+    _calc_quan_fry_params(salinity::Real, temperature::Real, pressure::Real)
 
 Helper function to get the parameters for the Quan & Fry formula as function of
 salinity, temperature and pressure.
 """
-function _get_quan_fry_params(
+function _calc_quan_fry_params(
     salinity::Real,
     temperature::Real,
     pressure::Real)
@@ -156,69 +193,51 @@ function _get_quan_fry_params(
 end
 
 """
-get_refractive_index_fry(wavelength, salinity, temperature, pressure)
+    refractive_index_fry(wavelength, salinity, temperature, pressure)
 
+The phase refractive index of sea water according to a model
+from Quan & Fry.
 
-    The phase refractive index of sea water according to a model
-    from Quan&Fry. 
+wavelength is given in nm, salinity in permille, temperature in °C and pressure in atm
 
-    wavelength is given in nm, salinity in permille, temperature in °C and pressure in atm
-    
-    The original model is taken from:
-    X. Quan, E.S. Fry, Appl. Opt., 34, 18 (1995) 3477-3480.
-    
-    An additional term describing pressure dependence was included according to:
-    Wolfgang H.W.A. Schuster, "Measurement of the Optical Properties of the Deep
-    Mediterranean - the ANTARES Detector Medium.",
-    PhD thesis (2002), St. Catherine's College, Oxford
-    downloaded Jan 2011 from: http://www.physics.ox.ac.uk/Users/schuster/thesis0098mmjhuyynh/thesis.ps
+The original model is taken from:
+X. Quan, E.S. Fry, Appl. Opt., 34, 18 (1995) 3477-3480.
 
-    Adapted from clsim (©Claudio Kopper)
+An additional term describing pressure dependence was included according to:
+Wolfgang H.W.A. Schuster, "Measurement of the Optical Properties of the Deep
+Mediterranean - the ANTARES Detector Medium.",
+PhD thesis (2002), St. Catherine's College, Oxford
+downloaded Jan 2011 from: http://www.physics.ox.ac.uk/Users/schuster/thesis0098mmjhuyynh/thesis.ps
+
+Adapted from clsim (©Claudio Kopper)
 """
-function get_refractive_index_fry(
-    wavelength::T,
-    quan_fry_params::Tuple{T, T, T, T}
-) where {T}
-    a01, a2, a3, a4 = quan_fry_params
-    x::T = one(T) / wavelength
-    x2::T = x * x
-    # a01 + x*a2 + x^2 * a3 + x^3 * a4
-    return T(fma(x, a2, a01) + fma(x2, a3, x2*x*a4))
-end
-
-function get_refractive_index_fry(
+function refractive_index_fry(
     wavelength::T;
     salinity::Real,
     temperature::Real,
     pressure::Real) where {T<:Real}
-    get_refractive_index_fry(wavelength, T.(_get_quan_fry_params(salinity, temperature, pressure)))
+    refractive_index_fry(wavelength, T.(_calc_quan_fry_params(salinity, temperature, pressure)))
 end
 
-function get_dispersion_fry(
-    wavelength::T,
-    quan_fry_params::Tuple{T, T, T, T}
-) where {T<:Real}
+function refractive_index_fry(
+    wavelength::Real,
+    quan_fry_params::Tuple{U, U, U, U}
+) where {U<:Real}
+
     a01, a2, a3, a4 = quan_fry_params
-    x = one(T) / wavelength
-
-    return T(a2 + T(2)*x*a3 + T(3)*x^2*a4) * T(-1)/wavelength^2
+    x = one(wavelength) / wavelength
+    x2 = x * x
+    # a01 + x*a2 + x^2 * a3 + x^3 * a4
+    return oftype(wavelength, fma(x, a2, a01) + fma(x2, a3, x2*x*a4))
 end
 
-function get_dispersion_fry(
-    wavelength::T;
-    salinity::Real,
-    temperature::Real,
-    pressure::Real) where {T <: Real}
-    get_dispersion_fry(wavelength, T.(_get_quan_fry_params(salinity, temperature, pressure)))
-end
-
-function get_refractive_index_fry(
+function refractive_index_fry(
     wavelength::Unitful.Length{T};
     salinity::Unitful.DimensionlessQuantity,
     temperature::Unitful.Temperature,
     pressure::Unitful.Pressure) where {T<:Real}
 
-    get_refractive_index_fry(
+    refractive_index_fry(
         ustrip(T, u"nm", wavelength),
         salinity=ustrip(u"permille", salinity),
         temperature=ustrip(u"°C", temperature),
@@ -227,47 +246,80 @@ function get_refractive_index_fry(
 end
 
 """
-    get_refractive_index(wavelength, medium)
+    refractive_index(wavelength, medium)
 
-    Return the refractive index at wavelength for medium
+Return the refractive index at `wavelength` for `medium`
 """
-get_refractive_index(wavelength::Real, medium::WaterProperties) = get_refractive_index_fry(
+refractive_index(wavelength::Real, medium::WaterProperties) = refractive_index_fry(
     wavelength,
-    medium._quan_fry_params
+    medium.quan_fry_params
 )
 
-get_refractive_index(wavelength::Unitful.Length, medium::MediumProperties) = get_refractive_index(
+refractive_index(wavelength::Unitful.Length, medium::MediumProperties) = refractive_index(
     ustrip(u"nm", wavelength),
     medium)
 
 
-get_dispersion(wavelength::Real, medium::WaterProperties) = get_dispersion_fry(
+"""
+dispersion_fry(
+    wavelength::T;
+    salinity::Real,
+    temperature::Real,
+    pressure::Real) where {T <: Real}
+
+    Calculate the dispersion (dn/dλ) for the Quan & Fry model.
+    wavelength is given in nm, salinity in permille, temperature in °C and pressure in atm
+"""
+function dispersion_fry(
+    wavelength::T;
+    salinity::Real,
+    temperature::Real,
+    pressure::Real) where {T <: Real}
+    dispersion_fry(wavelength, T.(_calc_quan_fry_params(salinity, temperature, pressure)))
+end
+
+function dispersion_fry(wavelength::T, quan_fry_params::Tuple{T, T, T, T}) where {T<:Real}
+    a2, a3, a4 = quan_fry_params
+    x = one(T) / wavelength
+
+    return T(a2 + T(2)*x*a3 + T(3)*x^2*a4) * T(-1)/wavelength^2
+end
+
+dispersion(wavelength::Real, medium::WaterProperties) = dispersion_fry(
     wavelength,
-    medium._quan_fry_params
+    medium.quan_fry_params
 )
 
-get_cherenkov_angle(wavelength, medium::MediumProperties) = acos(one(typeof(wavelength))/get_refractive_index(wavelength, medium))
+"""
+    cherenkov_angle(wavelength, medium::MediumProperties)
+Calculate the cherenkov angle (in rad) for `wavelength` and `medium`.
+"""
+function cherenkov_angle(wavelength, medium::MediumProperties)
+    return acos(one(typeof(wavelength))/refractive_index(wavelength, medium))
+end
 
-
-function get_group_velocity(wavelength::T, medium::MediumProperties) where {T<:Real}
+function group_velocity(wavelength::T, medium::MediumProperties) where {T<:Real}
     global c_vac_m_ns
-    ref_ix::T = get_refractive_index(wavelength, medium)
+    ref_ix::T = refractive_index(wavelength, medium)
     λ_0::T = ref_ix * wavelength
-    T(c_vac_m_ns) / (ref_ix - λ_0 * get_dispersion(wavelength, medium))
+    T(c_vac_m_ns) / (ref_ix - λ_0 * dispersion(wavelength, medium))
 end
 
 
 """
-get_sca_len_part_conc(wavelength; vol_conc_small_part, vol_conc_large_part)
+    _sca_len_part_conc(wavelength; vol_conc_small_part, vol_conc_large_part)
 
-    Calculates the scattering length (in m) for a given wavelength based on concentrations of 
-    small (`vol_conc_small_part`) and large (`vol_conc_large_part`) particles.
-    wavelength is given in nm, vol_conc_small_part and vol_conc_large_part in ppm
+Calculates the scattering length (in m) for a given wavelength based on concentrations of
+small (`vol_conc_small_part`) and large (`vol_conc_large_part`) particles.
+wavelength is given in nm, vol_conc_small_part and vol_conc_large_part in ppm
 
 
-    Adapted from clsim ©Claudio Kopper
+Adapted from clsim ©Claudio Kopper
 """
-@inline function get_sca_len_part_conc(wavelength::T; vol_conc_small_part::Real, vol_conc_large_part::Real) where {T<:Real}
+@inline function _sca_len_part_conc(
+    wavelength::T;
+    vol_conc_small_part::Real,
+    vol_conc_large_part::Real) where {T<:Real}
 
     ref_wlen::T = 550  # nm
     x::T = ref_wlen / wavelength
@@ -282,41 +334,56 @@ get_sca_len_part_conc(wavelength; vol_conc_small_part, vol_conc_large_part)
 
 end
 
-function get_sca_len_part_conc(
+function _sca_len_part_conc(
     wavelength::Unitful.Length;
     vol_conc_small_part::Unitful.DimensionlessQuantity,
     vol_conc_large_part::Unitful.DimensionlessQuantity)
 
-    get_sca_len_part_conc(
+    _sca_len_part_conc(
         ustrip(u"nm", wavelength),
         vol_conc_small_part=ustrip(u"ppm", vol_conc_small_part),
         vol_conc_large_part=ustrip(u"ppm", vol_conc_large_part))
 end
 
 """
-    get_scattering_length(wavelength, medium)
+    scattering_length(wavelength, medium)
 
 Return the scattering length for a given wavelength and medium
 """
-
-@inline function get_scattering_length(wavelength::Real, medium::WaterProperties)
-    get_sca_len_part_conc(wavelength, vol_conc_small_part=vol_conc_small_part(medium), vol_conc_large_part=vol_conc_large_part(medium))
+@inline function scattering_length(wavelength::Real, medium::WaterProperties)
+    _sca_len_part_conc(
+        wavelength;
+        vol_conc_small_part=vol_conc_small_part(medium),
+        vol_conc_large_part=vol_conc_large_part(medium))
 end
 
 
-function get_scattering_length(wavelength::Unitful.Length, medium::MediumProperties)
-    get_scattering_length(ustrip(u"nm", wavelength), medium)
+function scattering_length(wavelength::Unitful.Length, medium::MediumProperties)
+    scattering_length(ustrip(u"nm", wavelength), medium)
 end
 
 
-function get_absorption_length(wavelength::T, ::WaterProperties) where {T<:Real}
+"""
+    _absorption_length_straw(wavelength::Real)
+Calculate the absorption length at `wavelength` (in nm).
 
+Based on interpolation of STRAW attenuation length measurement.
+"""
+function _absorption_length_straw(wavelength::Real)
+    T = typeof(wavelength)
     x = [T(300.0), T(365.0), T(400.0), T(450.0), T(585.0), T(800.0)]
     y = [T(10.4), T(10.4), T(14.5), T(27.7), T(7.1), T(7.1)]
 
     fast_linear_interp(wavelength, x, y)
+end
 
+"""
+    absorption_length(wavelength::T, ::WaterProperties) where {T<:Real}
 
+Return the absorption length (in m) for `wavelength` (in nm)
+"""
+function absorption_length(wavelength::T, ::WaterProperties) where {T<:Real}
+    return _absorption_length_straw(wavelength)
 end
 
 

@@ -108,26 +108,26 @@ end
 @inline function sample_cherenkov_direction(source::CherenkovEmitter{T}, medium::MediumProperties, wl::T) where {T <: Real}
 
     # Sample a photon direction. Assumes track is aligned with e_z
-    theta_cherenkov = get_cherenkov_angle(wl, medium)
-    phi = uniform(T(0), T(2 * pi))    
+    theta_cherenkov = cherenkov_angle(wl, medium)
+    phi = uniform(T(0), T(2 * pi))
     ph_dir = sph_to_cart(theta_cherenkov, phi)
 
 
-    
+
     # Sample a direction of a "Cherenkov track". Assumes source direction is e_z
     track_dir::SVector{3, T} = sample_cherenkov_track_direction(T)
 
     # Rotate photon to track direction
     ph_dir = rot_from_ez_fast(track_dir, ph_dir)
-    
+
     # Rotate track to source direction
     ph_dir = rot_from_ez_fast(source.direction, ph_dir)
 
-    
+
     #= THIS IS WRONG
     # Sample a direction of a "Cherenkov track". Assumes source direction is e_z
     track_dir::SVector{3, T} = sample_cherenkov_track_direction(T)
-    
+
     # Rotate track coordinate system such that e_z aligns with source direction
     track_dir = rot_ez_fast(source.direction, track_dir)
 
@@ -146,7 +146,7 @@ end
 
     pos::SVector{3, T} = source.position .+ long_pos .* source.direction
     time = source.time + long_pos / T(c_vac_m_ns)
-    
+
     ph_dir = sample_cherenkov_direction(source, medium, wl)
 
     PhotonState(pos, ph_dir, time, wl)
@@ -156,9 +156,9 @@ end
     #wl = initialize_wavelength(source.spectrum)
     wl = initialize_wavelength(spectrum_texture)
 
-    pos::SVector{3, T} = source.position 
-    time = source.time 
-    
+    pos::SVector{3, T} = source.position
+    time = source.time
+
     ph_dir = sample_cherenkov_direction(source, medium, wl)
 
     PhotonState(pos, ph_dir, time, wl)
@@ -207,7 +207,7 @@ end
 @inline function check_intersection(pos::SVector{3,T}, dir::SVector{3,T}, target_pos::SVector{3,T}, target_rsq::T, step_size::T) where {T<:Real}
 
     dpos = pos .- target_pos
-    
+
     a::T = dot(dir, dpos)
     pp_norm_sq::T = sum(dpos .^ 2)
 
@@ -295,8 +295,8 @@ function cuda_propagate_photons!(
         time = photon_state.time
         dist_travelled = T(0)
 
-        sca_len::T = get_scattering_length(wavelength, medium)
-        c_grp::T = get_group_velocity(wavelength, medium)
+        sca_len::T = scattering_length(wavelength, medium)
+        c_grp::T = group_velocity(wavelength, medium)
 
 
         steps::Int32 = 15
@@ -323,7 +323,7 @@ function cuda_propagate_photons!(
             time += d / c_grp
 
             stack_idx::Int64 = CUDA.atomic_add!(pointer(cache, 1), Int64(1))
-            # @cuprintln("Thread: $thread, Block $block writing to $stack_idx")                
+            # @cuprintln("Thread: $thread, Block $block writing to $stack_idx")
             CUDA.@cuassert stack_idx <= ix_offset + stack_len "Stack overflow"
 
             out_positions[stack_idx] = pos
@@ -334,7 +334,7 @@ function cuda_propagate_photons!(
             CUDA.atomic_xchg!(pointer(out_stack_pointers, block), stack_idx)
             break
         end
-          
+
         n_photons_simulated += 1
 
     end
@@ -395,8 +395,8 @@ function cuda_propagate_photons_no_local_cache!(
         time = photon_state.time
         dist_travelled = T(0)
 
-        sca_len::T = get_scattering_length(wavelength, medium)
-        c_grp::T = get_group_velocity(wavelength, medium)
+        sca_len::T = scattering_length(wavelength, medium)
+        c_grp::T = group_velocity(wavelength, medium)
 
 
         steps::Int32 = 15
@@ -432,7 +432,7 @@ function cuda_propagate_photons_no_local_cache!(
             out_times[stack_idx] = time
             break
         end
-          
+
         n_photons_simulated += 1
 
     end
@@ -485,14 +485,14 @@ function cuda_propagate_multi_target!(
     Random.seed!(seed + global_thread_index)
 
     n_targets = length(target_x)
-    
+
     @cuassert targets_per_block * griddim == n_targets
 
-    
-    positions_x = @cuDynamicSharedMem(T, targets_per_block, sizeof(Int64))    
+
+    positions_x = @cuDynamicSharedMem(T, targets_per_block, sizeof(Int64))
     positions_y = @cuDynamicSharedMem(T, targets_per_block, sizeof(Int64) + sizeof(T)*targets_per_block)
     positions_z = @cuDynamicSharedMem(T, targets_per_block, sizeof(Int64) + 2*sizeof(T)*targets_per_block)
-    
+
     @inbounds for i in thread:blockdim:targets_per_block
         positions_x[i] = target_x[(block-1)*targets_per_block+i]
     end
@@ -510,7 +510,7 @@ function cuda_propagate_multi_target!(
     medium::MediumProperties{T} = MediumProp
 
     target_rsq = target_r^2
-    
+
     ix_offset::Int64 = (block - 1) * (stack_len) + 1
     @inbounds cache[1] = ix_offset
 
@@ -557,7 +557,7 @@ function cuda_propagate_multi_target!(
                     isin_comp = is_in(target_pos[1], pos[1], endpos[1])
                 else
                     isin_comp = is_in(target_pos[1], endpos[1], pos[1])
-                
+
                 if not isin_comp
                     continue
                 end
@@ -566,7 +566,7 @@ function cuda_propagate_multi_target!(
                     isin_comp = is_in(target_pos[2], pos[2], endpos[2])
                 else
                     isin_comp = is_in(target_pos[2], endpos[2], pos[2])
-                
+
                 if not isin_comp
                     continue
                 end
@@ -575,11 +575,11 @@ function cuda_propagate_multi_target!(
                     isin_comp = is_in(target_pos[3], pos[3], endpos[3])
                 else
                     isin_comp = is_in(target_pos[3], endpos[3], pos[3])
-                
+
                 if not isin_comp
                     continue
                 end
-                
+
                 # Check intersection with module
 
                 # a = dot(dir, (pos - target.position))
@@ -623,7 +623,7 @@ function cuda_propagate_multi_target!(
             #@cuprintln("Thread: $thread, Block $block, photon: $i, isec: $isec")
             if isec
                 stack_idx::Int64 = CUDA.atomic_add!(pointer(cache, 1), Int64(1))
-                # @cuprintln("Thread: $thread, Block $block writing to $stack_idx")                
+                # @cuprintln("Thread: $thread, Block $block writing to $stack_idx")
                 CUDA.@cuassert stack_idx <= ix_offset + stack_len "Stack overflow"
 
                 out_positions[stack_idx] = pos
@@ -642,7 +642,7 @@ function cuda_propagate_multi_target!(
 
     CUDA.atomic_add!(pointer(out_n_ph_simulated, 1), n_photons_simulated)
     out_err_code[1] = 0
-    
+
     return nothing
 
 end
@@ -683,7 +683,7 @@ end
 
 
 function initialize_photon_arrays(stack_length::Integer, blocks, type::Type)
-    (   
+    (
         CuVector(zeros(SVector{3,type}, stack_length * blocks)), # position
         CuVector(zeros(SVector{3,type}, stack_length * blocks)), # direction
         CuVector(zeros(type, stack_length * blocks)), # wavelength
@@ -696,7 +696,7 @@ end
 
 
 function initialize_photon_arrays(stack_length::Integer, type::Type)
-    (   
+    (
         CuVector(zeros(SVector{3,type}, stack_length)), # position
         CuVector(zeros(SVector{3,type}, stack_length)), # direction
         CuVector(zeros(type, stack_length)), # wavelength
@@ -725,7 +725,7 @@ function calculate_max_stack_size(total_mem, blocks)
 end
 
 function calculate_max_stack_size(total_mem)
-    one_event = sizeof(SVector{3, Float32}) * 2 + sizeof(Float32) * 3 
+    one_event = sizeof(SVector{3, Float32}) * 2 + sizeof(Float32) * 3
     return Int64(fld(total_mem-2*(sizeof(Int64)), one_event))
 end
 
@@ -802,7 +802,7 @@ function propagate_photons(
     if stack_idx == 0
         return DataFrame(), n_ph_sim
     end
-    
+
     positions = process_output(positions, stack_idx)
     dist_travelled = process_output(dist_travelled, stack_idx)
     wavelengths = process_output(wavelengths, stack_idx)
@@ -829,25 +829,25 @@ end
 
 
 function make_hits_from_photons(df::AbstractDataFrame , source::PhotonSource, target::PhotonTarget, medium::MediumProperties, target_orientation::SVector{3, T}) where {T<:Real}
-    
+
 
     df[:, :pmt_id] = check_pmt_hit(df[:, :position], target, target_orientation)
-    
+
     df = subset(df, :pmt_id => x -> x .> 0)
 
     df[!, :area_acc] = area_acceptance.(df[:, :position], Ref(target))
 
-    abs_length = get_absorption_length.(df[:, :wavelength], Ref(medium))
+    abs_length = absorption_length.(df[:, :wavelength], Ref(medium))
     df[!, :abs_weight] = convert(Vector{Float64}, exp.(-df[:, :dist_travelled] ./ abs_length))
 
     df[!, :wl_acc] = p_one_pmt_acc.(df[:, :wavelength])
-    
-    df[!, :ref_ix] = get_refractive_index.(df[:, :wavelength], Ref(medium))
+
+    df[!, :ref_ix] = refractive_index.(df[:, :wavelength], Ref(medium))
     c_vac = ustrip(u"m/ns", SpeedOfLightInVacuum)
-    
+
     distance = norm(source.position .- target.position)
 
-    tgeo = (distance - target.radius) ./ (c_vac / get_refractive_index(800.0f0, medium))
+    tgeo = (distance - target.radius) ./ (c_vac / refractive_index(800.0f0, medium))
     df[!, :tres] = (df[:, :time] .- tgeo)
 
     df[!, :total_weight] = df[:, :area_acc] .* df[:, :wl_acc] .* df[:, :abs_weight]

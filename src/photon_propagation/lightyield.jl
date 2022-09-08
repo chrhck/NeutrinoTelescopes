@@ -146,8 +146,8 @@ function LongitudinalParameterisation(energy::T, medium::MediumProperties, long_
     b = T(long_parameter_b_edep(energy, long_pars))
     a = T(long_parameter_a_edep(energy, long_pars))
 
-    unit_conv = 10 # g/cm^2 / "kg/m^3" in m    
-    lrad = radiation_length(medium) / density(medium) * unit_conv
+    unit_conv = 10 # g/cm^2 / "kg/m^3" in m
+    lrad = radiation_length(medium) / material_density(medium) * unit_conv
 
     LongitudinalParameterisation(a, b, lrad)
 end
@@ -213,7 +213,7 @@ long_parameter_b_edep(energy::Real, ::Type{ptype}) where {ptype <: ParticleType}
 
 """
     longitudinal_profile(z::Real, medium::MediumProperties, long_pars::LongitudinalParameters)
-    
+
 Longitudinal shower profile (PDF) at shower depth z ( in m )
 """
 function longitudinal_profile(z::Real, long_param::LongitudinalParameterisation)
@@ -229,7 +229,7 @@ end
 
 """
     longitudinal_profile(energy::Real, z::Real, medium::MediumProperties, long_pars::LongitudinalParameters)
-    
+
 energy in GeV, z in m,
 """
 
@@ -271,7 +271,7 @@ end
 
 function integral_long_profile(energy::Real, z_low::Real, z_high::Real, medium::MediumProperties, long_pars::LongitudinalParameters)
     long_param = LongitudinalParameterisation(energy, medium, long_pars)
-    integral_long_profile(z_low, z_high, long_param)    
+    integral_long_profile(z_low, z_high, long_param)
 end
 
 function integral_long_profile(energy::Real, z_low::Real, z_high::Real, medium::MediumProperties, ::Type{ptype}) where {ptype <: ParticleType}
@@ -357,7 +357,7 @@ function total_lightyield(
     wl_range::Tuple{T,T}
 ) where {T <:Real}
     total_contrib = (
-        frank_tamm_norm(wl_range, wl -> get_refractive_index(wl, medium)) *
+        frank_tamm_norm(wl_range, wl -> refractive_index(wl, medium)) *
         cherenkov_track_length.(particle.energy, particle.type)
     )
     total_contrib
@@ -505,7 +505,7 @@ function particle_to_elongated_lightsource!(
     fractional_contrib_long!(particle.energy, int_grid, medium, particle.type, fractional_contrib)
 
     total_contrib = (
-        frank_tamm_norm(wl_range, wl -> get_refractive_index(wl, medium)) *
+        frank_tamm_norm(wl_range, wl -> refractive_index(wl, medium)) *
         cherenkov_track_length(particle.energy, particle.type)
     )
 
