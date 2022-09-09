@@ -2,6 +2,8 @@ module Medium
 using Unitful
 using Base: @kwdef
 using PhysicalConstants.CODATA2018
+using Parquet
+using DataFrames
 
 using ...Utils
 
@@ -377,13 +379,28 @@ function _absorption_length_straw(wavelength::Real)
     fast_linear_interp(wavelength, x, y)
 end
 
+struct AbsLengthStrawFromFit
+    df::DataFrame
+end
+
+const ABSLENGTHSTRAWFIT = AbsLengthStrawFromFit(
+    DataFrame(read_parquet(joinpath(@__DIR__, "../../assets/attenuation_length_straw_fit.parquet"))))
+
+function (f::AbsLengthStrawFromFit)(wavelength::Real)
+    T = typeof(wavelength)
+    x::Vector{T} = f.df[:, :wavelength]
+    y::Vector{T} = f.df[:, :abs_len]
+    fast_linear_interp(wavelength, x, y)
+end
+
+
 """
     absorption_length(wavelength::T, ::WaterProperties) where {T<:Real}
 
 Return the absorption length (in m) for `wavelength` (in nm)
 """
 function absorption_length(wavelength::T, ::WaterProperties) where {T<:Real}
-    return _absorption_length_straw(wavelength)
+    return ABSLENGTHSTRAWFIT(wavelength)
 end
 
 
