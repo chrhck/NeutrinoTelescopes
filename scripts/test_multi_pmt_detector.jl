@@ -27,8 +27,7 @@ target = MultiPMTDetector(
 
 
 
-
-outdir = "/home/chrhck/data/sim/photon_prop/multi_pmt"
+outdir = joinpath(@__DIR__, "../assets/")
 
 dfs = []
 sim_params = []
@@ -46,7 +45,7 @@ sim_params = []
             PEMinus
     )
 
-    n_photons::Int64 = 1E10
+    n_photons::Int64 = 1E11
     prop_source = PointlikeCherenkovEmitter(particle, medium, n_photons, (300f0, 800f0))
     photons = propagate_photons(prop_source, target, medium)
 
