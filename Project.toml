@@ -65,6 +65,7 @@ Zygote = "e88e6eb3-aa80-5325-afca-941959d7151f"
 Parameters = "0.12"
 Traceur = "0.3"
 Unitful = "1"
+Zygote = "0.6"
 julia = "1.7"
 
 [extras]
