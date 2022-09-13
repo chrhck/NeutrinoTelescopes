@@ -20,7 +20,7 @@ distance = 10f0
 target = MultiPMTDetector(
     @SVector[distance, 0f0, 0f0],
     target_radius,
-    pmt_area, 
+    pmt_area,
     make_pom_pmt_coordinates(Float32)
     )
 
@@ -36,7 +36,7 @@ sim_params = []
     dir_costheta = rand(Uniform(-1, 1))
     dir_phi = rand(Uniform(0, 2*π))
     direction::SVector{3, Float32} = sph_to_cart(acos(dir_costheta), dir_phi)
-    
+
     particle = Particle(
             @SVector[0.0f0, 0f0, 0.0f0],
             direction,
@@ -66,7 +66,7 @@ sim_params = []
     end
     =#
 end
-   
+
 
 
 groups = groupby(hits, :pmt_id)
@@ -76,7 +76,7 @@ npmts = get_pmt_count(target)
 
 
 expec_per_pmt = rightjoin(expec_per_pmt, DataFrame(pmt_id=1:get_pmt_count(target), rel_angle=cos_rel_angles), on=:pmt_id)
-expec_per_pmt[!, :weight_ratio] = expec_per_pmt[:, :nhits] ./ expec_per_pmt[:, :expec_per_pmt] 
+expec_per_pmt[!, :weight_ratio] = expec_per_pmt[:, :nhits] ./ expec_per_pmt[:, :expec_per_pmt]
 push!(dfs, expec_per_pmt)
 end
 
@@ -100,7 +100,7 @@ end
 #
 for distance in distances
 
-    target = MultiPMTDetector(@SVector[distance, 0f0, 0f0], target_radius, pmt_area, 
+    target = MultiPMTDetector(@SVector[distance, 0f0, 0f0], target_radius, pmt_area,
         make_pom_pmt_coordinates(Float32))
 
     prop_source = PointlikeCherenkovEmitter(particle, medium, Int64(1E12), (300f0, 800f0))
