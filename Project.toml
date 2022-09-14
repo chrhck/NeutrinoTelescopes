@@ -62,6 +62,9 @@ Unitful = "1986cc42-f94f-5a68-af5c-568840ba703d"
 Zygote = "e88e6eb3-aa80-5325-afca-941959d7151f"
 
 [compat]
+Arrow = "2"
+Parameters = "0.12"
+Traceur = "0.3"
 DataFrames = "1"
 FFTW = "1"
 Optim = "1"
@@ -69,7 +72,7 @@ Revise = "3"
 Pipe = "1"
 QuadGK = "2"
 Unitful = "1"
-julia = "1.7"
+julia = "1.8"
 
 [extras]
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
