@@ -63,6 +63,8 @@ Zygote = "e88e6eb3-aa80-5325-afca-941959d7151f"
 
 [compat]
 Sobol = "1"
+Reexport = "1"
+StaticArrays = "1"
 CUDA = "3"
 Roots = "2"
 Plots = "1"
