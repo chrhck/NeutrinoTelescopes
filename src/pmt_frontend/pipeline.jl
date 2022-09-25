@@ -94,10 +94,10 @@ end
 
 
 function resample_simulation(df::AbstractDataFrame, downsample=1., per_pmt=true)
-    
-    
+
+
     wrapped(hit_times, total_weights) = resample_simulation(hit_times, total_weights, downsample)
-    
+
     if per_pmt
         groups = groupby(df, :pmt_id)
         resampled_hits = combine(groups, [:time, :total_weight] => wrapped => :time)
@@ -138,8 +138,8 @@ end
 function make_reco_pulses(results::AbstractDataFrame , pmt_config::PMTConfig=STD_PMT_CONFIG)
     @pipe results |>
       resample_simulation |>
-      apply_tt(_, pmt_config.tt_dist) |>
-      subtract_mean_tt(_, pmt_config.tt_dist) |>
+      apply_tt!(_, pmt_config.tt_dist) |>
+      subtract_mean_tt!(_, pmt_config.tt_dist) |>
       PulseSeries(_, pmt_config.spe_template, pmt_config.pulse_model) |>
       digitize_waveform(
         _,
