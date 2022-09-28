@@ -11,7 +11,7 @@ using PhysicalConstants.CODATA2018
 using StatsBase
 using Logging
 using PoissonRandom
-
+using Rotations
 
 export cuda_propagate_photons!, initialize_photon_arrays, process_output
 export cuda_propagate_multi_target!
@@ -89,29 +89,12 @@ Sample a direction isotropically
 end
 
 
-@inline initialize_wavelength(::T) where {T<:Spectrum} = throw(ArgumentError("Cannot initialize $T"))
-@inline initialize_wavelength(spectrum::Monochromatic{T}) where {T} = spectrum.wavelength
-@inline initialize_wavelength(spectrum::CuDeviceTexture{T, 1}) where {T} = @inbounds spectrum[rand(T)]
-
-@inline function initialize_wavelength(spectrum::CherenkovSpectrum{T}) where {T}
-    fast_linear_interp(rand(T), spectrum.knots, T(0), T(1))
-end
-
-@inline function initialize_photon_state(source::PointlikeIsotropicEmitter{T}, ::MediumProperties, spectrum_texture::CuDeviceTexture{T, 1}) where {T <: Real}
-    #wl = initialize_wavelength(source.spectrum)
-    wl = initialize_wavelength(spectrum_texture)
-    pos = source.position
-    dir = initialize_direction_isotropic(T)
-    PhotonState(pos, dir, T(0), wl)
-end
-
 @inline function sample_cherenkov_direction(source::CherenkovEmitter{T}, medium::MediumProperties, wl::T) where {T <: Real}
 
     # Sample a photon direction. Assumes track is aligned with e_z
     theta_cherenkov = cherenkov_angle(wl, medium)
     phi = uniform(T(0), T(2 * pi))
     ph_dir = sph_to_cart(theta_cherenkov, phi)
-
 
 
     # Sample a direction of a "Cherenkov track". Assumes source direction is e_z
@@ -123,24 +106,41 @@ end
     # Rotate track to source direction
     ph_dir = rot_from_ez_fast(source.direction, ph_dir)
 
-
-    #= THIS IS WRONG
-    # Sample a direction of a "Cherenkov track". Assumes source direction is e_z
-    track_dir::SVector{3, T} = sample_cherenkov_track_direction(T)
-
-    # Rotate track coordinate system such that e_z aligns with source direction
-    track_dir = rot_ez_fast(source.direction, track_dir)
-
-    # Rotate track coordinate system such, that e_z aligns with track direction
-    ph_dir = rot_ez_fast(track_dir, ph_dir)
-    =#
     return ph_dir
 end
 
 
-@inline function initialize_photon_state(source::ExtendedCherenkovEmitter{T, N}, medium::MediumProperties, spectrum_texture::CuDeviceTexture{T, 1}) where {T <:Real, N}
+@inline initialize_wavelength(::T) where {T<:Spectrum} = throw(ArgumentError("Cannot initialize $T"))
+@inline initialize_wavelength(spectrum::Monochromatic{T}) where {T} = spectrum.wavelength
+@inline initialize_wavelength(spectrum::CherenkovSpectrum{T, P}) where {T, P} = @inbounds spectrum.texture[rand(T)]
+
+
+@inline function initialize_photon_state(source::PointlikeIsotropicEmitter{T}, ::MediumProperties, spectrum::Spectrum) where {T <: Real}
+    wl = initialize_wavelength(spectrum)
+    pos = source.position
+    dir = initialize_direction_isotropic(T)
+    PhotonState(pos, dir, source.time, wl)
+end
+
+@inline function initialize_photon_state(source::AxiconeEmitter{T}, ::MediumProperties, spectrum::Spectrum) where {T <: Real}
+    wl = initialize_wavelength(spectrum)
+    pos = source.position
+    phi = uniform(T(0), T(2 * pi))
+    theta = source.angle
+    dir = rot_from_ez_fast(source.direction, sph_to_cart(theta, phi))
+
+    PhotonState(pos, dir, source.time, wl)
+end
+
+@inline function initialize_photon_state(source::PencilEmitter{T}, ::MediumProperties, spectrum::Spectrum) where {T <: Real}
+    wl = initialize_wavelength(spectrum)
+    PhotonState(source.position, source.direction, source.time, wl)
+end
+
+
+@inline function initialize_photon_state(source::ExtendedCherenkovEmitter{T}, medium::MediumProperties, spectrum::Spectrum) where {T <:Real}
     #wl = initialize_wavelength(source.spectrum)
-    wl = initialize_wavelength(spectrum_texture)
+    wl = initialize_wavelength(spectrum)
 
     long_pos = rand_gamma(T(source.long_param.a), T(1 / source.long_param.b), Float32) * source.long_param.lrad
 
@@ -152,9 +152,9 @@ end
     PhotonState(pos, ph_dir, time, wl)
 end
 
-@inline function initialize_photon_state(source::PointlikeCherenkovEmitter{T, N}, medium::MediumProperties, spectrum_texture::CuDeviceTexture{T, 1}) where {T <:Real, N}
+@inline function initialize_photon_state(source::PointlikeCherenkovEmitter{T}, medium::MediumProperties, spectrum::Spectrum) where {T <:Real}
     #wl = initialize_wavelength(source.spectrum)
-    wl = initialize_wavelength(spectrum_texture)
+    wl = initialize_wavelength(spectrum)
 
     pos::SVector{3, T} = source.position
     time = source.time
@@ -166,13 +166,13 @@ end
 
 
 
-@inline function update_direction(this_dir::SVector{3,T}) where {T}
+@inline function update_direction(this_dir::SVector{3,T}, medium::MediumProperties) where {T}
     #=
     Update the photon direction using scattering function.
     =#
 
     # Calculate new direction (relative to e_z)
-    cos_sca_theta = cuda_hg_scattering_func(T(0.99))
+    cos_sca_theta = cuda_hg_scattering_func(mean_scattering_angle(medium))
     sin_sca_theta = CUDA.sqrt(CUDA.fma(-cos_sca_theta, cos_sca_theta, 1))
     sca_phi = uniform(T(0), T(2 * pi))
 
@@ -246,7 +246,8 @@ function cuda_propagate_photons!(
     stack_len::Int32,
     seed::Int64,
     source::U,
-    spectrum_texture::CuDeviceTexture{T, 1},
+    #spectrum_texture::CuDeviceTexture{T, 1},
+    spectrum::Spectrum,
     target_pos::SVector{3,T},
     target_r::T,
     ::Val{MediumProp}) where {T, U <: PhotonSource{T},MediumProp}
@@ -285,7 +286,7 @@ function cuda_propagate_photons!(
             break
         end
 
-        photon_state = initialize_photon_state(source, medium, spectrum_texture)
+        photon_state = initialize_photon_state(source, medium, spectrum)
 
         dir::SVector{3,T} = photon_state.direction
         initial_dir = copy(dir)
@@ -313,7 +314,7 @@ function cuda_propagate_photons!(
                 pos = update_position(pos, dir, step_size)
                 dist_travelled += step_size
                 time += step_size / c_grp
-                dir = update_direction(dir)
+                dir = update_direction(dir, medium)
                 continue
             end
 
@@ -358,7 +359,8 @@ function cuda_propagate_photons_no_local_cache!(
     stack_len::Int32,
     seed::Int64,
     source::U,
-    spectrum_texture::CuDeviceTexture{T, 1},
+    #spectrum_texture::CuDeviceTexture{T, 1},
+    spectrum::Spectrum,
     target_pos::SVector{3,T},
     target_r::T,
     ::Val{MediumProp}) where {T, U <: PhotonSource{T},MediumProp}
@@ -382,10 +384,9 @@ function cuda_propagate_photons_no_local_cache!(
 
     n_photons_simulated = Int64(0)
 
-
     @inbounds for i in 1:this_n_photons
 
-        photon_state = initialize_photon_state(source, medium, spectrum_texture)
+        photon_state = initialize_photon_state(source, medium, spectrum)
 
         dir::SVector{3,T} = photon_state.direction
         initial_dir = copy(dir)
@@ -413,7 +414,7 @@ function cuda_propagate_photons_no_local_cache!(
                 pos = update_position(pos, dir, step_size)
                 dist_travelled += step_size
                 time += step_size / c_grp
-                dir = update_direction(dir)
+                dir = update_direction(dir, medium)
                 continue
             end
 
@@ -734,18 +735,16 @@ end
 function run_photon_prop(
     source::PhotonSource,
     target::PhotonTarget,
-    medium::MediumProperties
+    medium::MediumProperties,
+    spectrum::Spectrum
 )
 
     positions, directions, wavelengths, dist_travelled, times, stack_idx, n_ph_sim = initialize_photon_arrays(1, 1, Float32)
     err_code = CuVector(zeros(Int32, 1))
 
-    spectrum_vals = CuTextureArray(source.spectrum.knots)
-    spectrum_texture = CuTexture(spectrum_vals; interpolation=CUDA.LinearInterpolation(), normalized_coordinates=true)
-
     kernel = @cuda launch=false cuda_propagate_photons!(
         positions, directions, wavelengths, dist_travelled, times, stack_idx, n_ph_sim, err_code, Int32(1E6), Int64(0),
-        source, spectrum_texture, target.position, target.radius, Val(medium))
+        source, spectrum, target.position, target.radius, Val(medium))
 
     blocks, threads = CUDA.launch_configuration(kernel.fun, shmem=sizeof(Int64))
 
@@ -756,7 +755,7 @@ function run_photon_prop(
 
     kernel(
         positions, directions, wavelengths, dist_travelled, times, stack_idx, n_ph_sim, err_code, stack_len, Int64(0),
-        source, spectrum_texture, target.position, target.radius, Val(medium); threads=threads, blocks=blocks, shmem=sizeof(Int64))
+        source, spectrum, target.position, target.radius, Val(medium); threads=threads, blocks=blocks, shmem=sizeof(Int64))
 
     return positions, directions, wavelengths, dist_travelled, times, stack_idx, n_ph_sim
 end
@@ -764,25 +763,24 @@ end
 function run_photon_prop_no_local_cache(
     source::PhotonSource,
     target::PhotonTarget,
-    medium::MediumProperties
+    medium::MediumProperties,
+    spectrum::Spectrum
 )
     avail_mem = CUDA.totalmem(collect(CUDA.devices())[1])
     max_total_stack_len = PhotonPropagationCuda.calculate_max_stack_size(0.5*avail_mem)
     positions, directions, wavelengths, dist_travelled, times, stack_idx, n_ph_sim = initialize_photon_arrays(max_total_stack_len, Float32)
     err_code = CuVector(zeros(Int32, 1))
 
-    spectrum_vals = CuTextureArray(source.spectrum.knots)
-    spectrum_texture = CuTexture(spectrum_vals; interpolation=CUDA.LinearInterpolation(), normalized_coordinates=true)
 
     kernel = @cuda launch=false PhotonPropagationCuda.cuda_propagate_photons_no_local_cache!(
         positions, directions, wavelengths, dist_travelled, times, stack_idx, n_ph_sim, err_code, Int32(1E6), Int64(0),
-        source, spectrum_texture, target.position, target.radius, Val(medium))
+        source, spectrum, target.position, target.radius, Val(medium))
 
     blocks, threads = CUDA.launch_configuration(kernel.fun)
 
     kernel(
         positions, directions, wavelengths, dist_travelled, times, stack_idx, n_ph_sim, err_code, max_total_stack_len, Int64(0),
-        source, spectrum_texture, target.position, target.radius, Val(medium); threads=threads, blocks=blocks)
+        source, spectrum, target.position, target.radius, Val(medium); threads=threads, blocks=blocks)
 
     return positions, directions, wavelengths, dist_travelled, times, stack_idx, n_ph_sim
 end
@@ -793,9 +791,10 @@ end
 function propagate_photons(
     source::PhotonSource,
     target::PhotonTarget,
-    medium::MediumProperties)
+    medium::MediumProperties,
+    spectrum::Spectrum)
 
-    positions, directions, wavelengths, dist_travelled, times, stack_idx, n_ph_sim = run_photon_prop_no_local_cache(source, target, medium)
+    positions, directions, wavelengths, dist_travelled, times, stack_idx, n_ph_sim = run_photon_prop_no_local_cache(source, target, medium, spectrum)
 
     stack_idx = Vector(stack_idx)[1]
     n_ph_sim = Vector(n_ph_sim)[1]
@@ -828,7 +827,12 @@ function propagate_photons(
 end
 
 
-function make_hits_from_photons(df::AbstractDataFrame , source::PhotonSource, target::PhotonTarget, medium::MediumProperties, target_orientation::SVector{3, T}) where {T<:Real}
+function make_hits_from_photons(
+    df::AbstractDataFrame,
+    source::PhotonSource,
+    target::PhotonTarget,
+    medium::MediumProperties,
+    target_orientation::AbstractMatrix{<:Real})
 
 
     df[:, :pmt_id] = check_pmt_hit(df[:, :position], target, target_orientation)

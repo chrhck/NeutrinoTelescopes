@@ -7,6 +7,7 @@ using Unitful
 using LinearAlgebra
 using Base.Iterators
 using JSON
+using Rotations
 using ...Utils
 
 
@@ -45,15 +46,18 @@ get_pmt_count(det::MultiPMTDetector) = size(det.pmt_coordinates, 2)
 
 check_pmt_hit(::SVector{3, <:Real}, ::DetectionSphere) = 1
 
-function check_pmt_hit(position::SVector{3, <:Real}, target::MultiPMTDetector{<:Real}, orientation::SVector{3, <:Real})
-    
-    orient_R = calc_rot_matrix(SA[0., 0., 1.], orientation)
+function check_pmt_hit(
+    position::SVector{3, <:Real},
+    target::MultiPMTDetector{<:Real},
+    orientation::Rotation{3, <:Real})
+
+
     pmt_positions::Vector{SVector{3, eltype(target.pmt_coordinates)}} = [
-        orient_R * sph_to_cart(det_θ, det_ϕ) 
+        orientation * sph_to_cart(det_θ, det_ϕ)
         for (det_θ, det_ϕ) in eachcol(target.pmt_coordinates)
     ]
- 
-    pmt_radius = sqrt(target.pmt_area / π) 
+
+    pmt_radius = sqrt(target.pmt_area / π)
     opening_angle = asin(pmt_radius / target.radius)
 
     tpos = convert(SVector{3, Float64}, target.position)
@@ -71,15 +75,15 @@ end
 function check_pmt_hit(
     positions::U,
     target::MultiPMTDetector{<:Real},
-    orientation::SVector{3, <:Real}) where {T <: SVector{3, <:Real}, U <: AbstractVector{T} }
-    
-    orient_R = calc_rot_matrix(SA[0., 0., 1.], orientation)
+    orientation::Rotation{3, <:Real}) where {T <: SVector{3, <:Real}, U <: AbstractVector{T} }
+
+    #orient_R = calc_rot_matrix(SA[0., 0., 1.], orientation)
     pmt_positions::Vector{SVector{3, eltype(target.pmt_coordinates)}} = [
-        orient_R * sph_to_cart(det_θ, det_ϕ) 
+        orientation * sph_to_cart(det_θ, det_ϕ)
         for (det_θ, det_ϕ) in eachcol(target.pmt_coordinates)
     ]
- 
-    pmt_radius = sqrt(target.pmt_area / π) 
+
+    pmt_radius = sqrt(target.pmt_area / π)
     opening_angle = asin(pmt_radius / target.radius)
 
     tpos = convert(SVector{3, Float64}, target.position)

@@ -5,14 +5,14 @@ export Spectrum, Monochromatic, CherenkovSpectralDist, CherenkovSpectrum
 export frank_tamm, frank_tamm_norm, frank_tamm_inverted_cdf
 
 using Distributions
-
+using Adapt
 using Interpolations
 using PhysicalConstants.CODATA2018
 using Unitful
 using Random
 using StaticArrays
 using LinearAlgebra
-
+using CUDA
 using ..Medium
 using ...Utils
 
@@ -86,21 +86,27 @@ end
 
 Base.:rand(rng::AbstractRNG, s::CherenkovSpectralDist) = s.interpolation(rand(rng))
 
-
-
-struct CherenkovSpectrum{T<:Real,N} <: Spectrum
+struct CherenkovSpectrum{T<:Real, A} <: Spectrum
     wl_range::Tuple{T,T}
-    knots::SVector{N,T}
+    texture::A
 
-    CherenkovSpectrum(::Tuple{T,T}, ::SVector{N,T}) where {T<:Real,N<:Integer} = error("default constructor disabled")
+    function CherenkovSpectrum(wl_range::Tuple{T,T}, texture::A) where {T<:Real, A}
+        new{T, A}(wl_range, texture)
+    end
 
-    function CherenkovSpectrum(wl_range::Tuple{T,T}, interp_steps::U, medium::V) where {T<:Real,U<:Integer,V<:MediumProperties}
+    function CherenkovSpectrum(wl_range::Tuple{T,T}, interp_steps::Integer, medium::MediumProperties) where {T<:Real}
         spec = CherenkovSpectralDist(wl_range, medium)
         eval_knots = range(T(0), T(1), interp_steps)
-        knots = SVector{interp_steps,T}(spec.interpolation(eval_knots))
-        return new{T,interp_steps}(wl_range, knots)
+        knots = spec.interpolation(eval_knots)
+
+        spectrum_vals = CuTextureArray(knots)
+        spectrum_texture = CuTexture(spectrum_vals; interpolation=CUDA.LinearInterpolation(), normalized_coordinates=true)
+
+        return new{T, typeof(spectrum_texture)}(wl_range, spectrum_texture)
     end
 
 end
+
+Adapt.@adapt_structure CherenkovSpectrum
 
 end

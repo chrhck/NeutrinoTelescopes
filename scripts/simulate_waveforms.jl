@@ -12,6 +12,8 @@ using BenchmarkTools
 using StatsPlots
 using GaussianProcesses
 using Optim
+import Pipe:@pipe
+using PoissonRandom
 
 
 spe_d = make_spe_dist(STD_PMT_CONFIG.spe_template)
@@ -24,9 +26,9 @@ plot!(x -> evaluate_pulse_template(STD_PMT_CONFIG.pulse_model_filt, 0.0, x), -50
 distance = 50f0
 pmt_area=Float32((75e-3 / 2)^2*π)
 target_radius = 0.21f0
-target = MultiPMTDetector(@SVector[0.0f0, 0.0f0, distance], target_radius, pmt_area, 
+target = MultiPMTDetector(@SVector[0.0f0, 0.0f0, distance], target_radius, pmt_area,
     make_pom_pmt_coordinates(Float32))
-medium = make_cascadia_medium_properties(Float32)
+medium = make_cascadia_medium_properties(0.99f0)
 targets = [target]
 
 
@@ -45,20 +47,50 @@ particle = Particle(
 prop_source_ext = ExtendedCherenkovEmitter(particle, medium, (300f0, 800f0))
 #prop_source_che = PointlikeCherenkovEmitter(particle, medium, (300f0, 800f0))
 
-res, nph_sim = propagate_photons(prop_source_ext, target, medium)
-res = make_hits_from_photons(res, source, target, medium)
+spectrum = CherenkovSpectrum((300f0, 800f0), 30, medium)
+
+res = propagate_photons(prop_source_ext, target, medium, spectrum)
+
+coszen_orient = 0
+phi_orient = 0
+
+orientation = sph_to_cart(acos(coszen_orient), phi_orient,)
+
+
+
+res = make_hits_from_photons(res, prop_source_ext, target, medium, orientation)
 res_grp_pmt = groupby(res, :pmt_id)
 
 results = res_grp_pmt[5]
+pmt_config = STD_PMT_CONFIG
+waveform = @pipe results |>
+      resample_simulation |>
+      apply_tt!(_, pmt_config.tt_dist) |>
+      subtract_mean_tt!(_, pmt_config.tt_dist) |>
+      PulseSeries(_, pmt_config.spe_template, pmt_config.pulse_model) |>
+      digitize_waveform(
+        _,
+        pmt_config.sampling_freq,
+        pmt_config.adc_freq,
+        pmt_config.noise_amp,
+        pmt_config.lp_filter
+      )
 
+
+
+p = histogram(results[:, :time], bins=200:250, xlabel="Time (ns)",
+          ylabel="Counts", label="")
+savefig(p, joinpath(@__DIR__, "../figures/example_photons.png"))
 reco_pulses = make_reco_pulses(results)
-plot(reco_pulses, xlim=(-50, 200))
+p = plot(waveform, xlabel="Time (ns)", xlim=(200, 250),
+         ylabel="Amplitude (a.u.)", label="")#xlim=(-50, 200))
+savefig(p, joinpath(@__DIR__, "../figures/example_waveform.png"))
 
 
 function plot_chain(results::AbstractDataFrame, pmt_config::PMTConfig)
     layout = @layout [a; b]
 
-    p1 = histogram(results[:, :tres], weights=results[:, :total_weight], 
+    p1 = histogram(results[:, :tres], weights=results[:, :total_weight],
                    bins=-10:1:50, label="Photons", xlabel="Time residual (ns)", ylabel="Counts")
 
     hit_times = resample_simulation(results)
@@ -80,7 +112,7 @@ function plot_chain(results::AbstractDataFrame, pmt_config::PMTConfig)
     reco_pulses = unfold_waveform(wf, pmt_config.pulse_model_filt, pmt_config.unf_pulse_res, 0.2, :fnnls)
     pulses_orig_temp = PulseSeries(reco_pulses.times, reco_pulses.charges, pmt_config.pulse_model)
 
-    
+
     p2 = plot!(p2, reco_pulses, -10:0.01:50, label="Reconstructed waveform")
     p2 = plot!(p2, pulses_orig_temp, -10:0.01:50, label="Unfolded waveform")
 
@@ -100,7 +132,7 @@ mZero = MeanZero()                   #Zero mean function
 kern = Mat32Iso(1.0, 1.0)                   #Sqaured exponential kernel (note that hyperparameters are on the log scale)
 
 logObsNoise = -1.0                        # log standard deviation of observation noise (this is optional)
-gp = GP(xs,ys,mZero,kern,logObsNoise)  
+gp = GP(xs,ys,mZero,kern,logObsNoise)
 
 plot(reco_pulses_che)
 

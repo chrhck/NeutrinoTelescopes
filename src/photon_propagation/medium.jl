@@ -10,6 +10,7 @@ using ...Utils
 export make_cascadia_medium_properties
 export salinity, pressure, temperature, vol_conc_small_part, vol_conc_large_part, radiation_length, material_density
 export refractive_index, scattering_length, absorption_length, dispersion, group_velocity, cherenkov_angle
+export mean_scattering_angle
 export MediumProperties, WaterProperties
 
 @unit ppm "ppm" Partspermillion 1 // 1000000 false
@@ -64,6 +65,7 @@ Properties for a water-like medium. Use unitful constructor to create a value of
 -vol_conc_large_part -- Volumetric concentrations of large particles (ppm)
 -radiation_length -- Radiation length (g/cm^2)
 -density -- Density (kg/m^3)
+-mean_scattering_angle -- Cosine of the mean scattering angle
 """
 struct WaterProperties{T<:Real} <: MediumProperties{T}
     salinity::T # permille
@@ -73,9 +75,10 @@ struct WaterProperties{T<:Real} <: MediumProperties{T}
     vol_conc_large_part::T # ppm
     radiation_length::T # g / cm^2
     density::T # kg/m^3
+    mean_scattering_angle::T
     quan_fry_params::Tuple{T, T, T, T}
 
-    WaterProperties(::T, ::T, ::T, ::T, ::T, ::T, ::T, ::Tuple{T, T, T, T}) where {T} = error("Use unitful constructor")
+    WaterProperties(::T, ::T, ::T, ::T, ::T, ::T, ::T, ::T, ::Tuple{T, T, T, T}) where {T} = error("Use unitful constructor")
 
     @doc """
             function WaterProperties(
@@ -98,7 +101,8 @@ struct WaterProperties{T<:Real} <: MediumProperties{T}
         temperature::Unitful.Quantity{T},
         vol_conc_small_part::Unitful.Quantity{T},
         vol_conc_large_part::Unitful.Quantity{T},
-        radiation_length::Unitful.Quantity{T}
+        radiation_length::Unitful.Quantity{T},
+        mean_scattering_angle::T
     ) where {T<:Real}
         salinity = ustrip(T, u"permille", salinity)
         temperature = ustrip(T, u"°C", temperature)
@@ -114,6 +118,7 @@ struct WaterProperties{T<:Real} <: MediumProperties{T}
             ustrip(T, u"ppm", vol_conc_large_part),
             ustrip(T, u"g/cm^2", radiation_length),
             density,
+            mean_scattering_angle,
             quan_fry_params
         )
     end
@@ -123,13 +128,15 @@ end
     make_cascadia_medium_properties(::Type{T}) where {T<:Real}
 Construct `WaterProperties` with properties from Cascadia Basin of numerical type `T`.
 """
-make_cascadia_medium_properties(::Type{T}) where {T<:Real} = WaterProperties(
+make_cascadia_medium_properties(mean_scattering_angle::T) where {T<:Real} = WaterProperties(
     T(34.82)u"permille",
     T(269.44088)u"bar",
     T(1.8)u"°C",
     T(0.0075)u"ppm",
     T(0.0075)u"ppm",
-    T(36.08)u"g/cm^2")
+    T(36.08)u"g/cm^2",
+    mean_scattering_angle)
+
 
 
 salinity(::T) where {T<:MediumProperties} = error("Not implemented for $T")
@@ -153,6 +160,9 @@ vol_conc_large_part(x::WaterProperties) = x.vol_conc_large_part
 
 radiation_length(::T) where {T<:MediumProperties} = error("Not implemented for $T")
 radiation_length(x::WaterProperties) = x.radiation_length
+
+mean_scattering_angle(::T) where {T<:MediumProperties} = error("Not implemented for $T")
+mean_scattering_angle(x::WaterProperties) = x.mean_scattering_angle
 
 
 """

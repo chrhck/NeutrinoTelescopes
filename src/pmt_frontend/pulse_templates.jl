@@ -26,7 +26,7 @@ Fit a polynomial to the relationship between Gumbel width and FWHM
 """
 function fit_gumbel_fwhm_width()
     # find relationship between Gumbel width and FWHM
-    
+
 
     widths = 0.5:0.01:5
 
@@ -116,7 +116,7 @@ function make_filtered_pulse(
     orig_pulse::PulseTemplate,
     sampling_freq::Real,
     eval_range::Tuple{<:Real,<:Real},
-    filter) 
+    filter)
 
     timesteps = range(eval_range[1], eval_range[2], step=1 / sampling_freq)
     orig_eval = evaluate_pulse_template(orig_pulse, 0.0, timesteps)
@@ -126,18 +126,21 @@ function make_filtered_pulse(
     return InterpolatedPulse(interp_linear, 1.0)
 end
 
-struct PulseSeries{T<:Real, V<:AbstractVector{T}, U<:PulseTemplate}
-    times::V
-    charges::V
+struct PulseSeries{T<:AbstractVector{<:Real}, U<:PulseTemplate}
+    times::T
+    charges::T
     pulse_shape::U
 
     function PulseSeries(
-        times::V,
-        charges::V,
-        shape::U) where {T<:Real, V<: AbstractVector{T}, U<:PulseTemplate }
+        times::AbstractVector,
+        charges::AbstractVector,
+        shape::PulseTemplate)
 
+        ptype = promote_type(eltype(times), eltype(charges))
         ix = sortperm(times)
-        return new{T, V, U}(times[ix], charges[ix], shape)
+        t = convert.(ptype, times[ix])
+        c = convert.(ptype, charges[ix])
+        return new{typeof(t), typeof(shape)}(t, c, shape)
     end
 end
 
@@ -156,7 +159,7 @@ end
 
 Base.length(ps::PulseSeries) = length(ps.times)
 
-function Base.:+(a::PulseSeries{T,V}, b::PulseSeries{T,V}) where {T<:Real,V<:AbstractVector{T}}
+function Base.:+(a::PulseSeries, b::PulseSeries)
     # Could instead parametrize PulseSeries by PulseShape
     if a.pulse_shape != b.pulse_shape
         throw(ArgumentError("Pulse shapes are not compatible"))
@@ -165,15 +168,15 @@ function Base.:+(a::PulseSeries{T,V}, b::PulseSeries{T,V}) where {T<:Real,V<:Abs
 end
 
 
-function evaluate_pulse_series(time::Real, ps::PulseSeries{<:Real}) 
+function evaluate_pulse_series(time::Real, ps::PulseSeries)
     sum(evaluate_pulse_template.(Ref(ps.pulse_shape), ps.times, Ref(time)) .* ps.charges)
 end
 
-function evaluate_pulse_series(times::AbstractVector{<:Real}, ps::PulseSeries{<:Real})
+function evaluate_pulse_series(times::AbstractVector{<:Real}, ps::PulseSeries)
 
     u = length(times)
     v = length(ps)
-    
+
     output = Matrix{eltype(times)}(undef, u, v)
 
     @inbounds for (i, j) in product(eachindex(times), eachindex(ps.times))

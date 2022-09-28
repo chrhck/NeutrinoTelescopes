@@ -11,7 +11,9 @@ export total_lightyield
 
 export AngularEmissionProfile
 export PhotonSource, PointlikeIsotropicEmitter, ExtendedCherenkovEmitter, CherenkovEmitter, PointlikeCherenkovEmitter
+export AxiconeEmitter, PencilEmitter
 export cherenkov_ang_dist, cherenkov_ang_dist_int
+
 
 using Parameters: @with_kw
 using SpecialFunctions: gamma
@@ -367,33 +369,46 @@ end
 abstract type PhotonSource{T} end
 abstract type CherenkovEmitter{T} <: PhotonSource{T} end
 
-struct PointlikeIsotropicEmitter{T, U<:Spectrum} <: PhotonSource{T}
-    position::SVector{3,T}
+struct AxiconeEmitter{T} <: PhotonSource{T}
+    position::SVector{3, T}
+    direction::SVector{3, T}
     time::T
     photons::Int64
-    spectrum::U
+    angle::T
+end
+
+struct PencilEmitter{T} <: PhotonSource{T}
+    position::SVector{3, T}
+    direction::SVector{3, T}
+    time::T
+    photons::Int64
 end
 
 
-function PointlikeIsotropicEmitter(position::SVector{3, T}, time::T, photons::Int64, medium::MediumProperties, wl_range::Tuple{T, T}) where {T<:Real}
-    spectrum = CherenkovSpectrum(wl_range, 20, medium)
-    PointlikeIsotropicEmitter(position, time, photons, spectrum)
+
+struct PointlikeIsotropicEmitter{T} <: PhotonSource{T}
+    position::SVector{3,T}
+    time::T
+    photons::Int64
+end
+
+
+function PointlikeIsotropicEmitter(position::SVector{3, T}, time::T, photons::Int64) where {T<:Real}
+    PointlikeIsotropicEmitter(position, time, photons)
 end
 
 JSON.lower(e::PointlikeIsotropicEmitter) = Dict(
     "position" => e.position,
     "time" => e.time,
     "photons" => e.photons,
-    "wl_range" => e.spectrum.wl_range,
 )
 
 
-struct ExtendedCherenkovEmitter{T, N} <: CherenkovEmitter{T}
+struct ExtendedCherenkovEmitter{T} <: CherenkovEmitter{T}
     position::SVector{3,T}
     direction::SVector{3,T}
     time::T
     photons::Int64
-    spectrum::CherenkovSpectrum{T, N}
     long_param::LongitudinalParameterisation{T}
 end
 
@@ -401,13 +416,11 @@ function ExtendedCherenkovEmitter(
     particle::Particle,
     medium::MediumProperties,
     wl_range::Tuple{T, T},
-    ) where {T <: Real}
-
+    ) where {T<:Real}
     long_param = LongitudinalParameterisation(particle.energy, medium, particle.type)
     photons = pois_rand(total_lightyield(particle, medium, wl_range))
-    spectrum = CherenkovSpectrum(wl_range, 20, medium)
 
-    ExtendedCherenkovEmitter(particle.position, particle.direction, particle.time, photons, spectrum, long_param)
+    ExtendedCherenkovEmitter(particle.position, particle.direction, particle.time, photons, long_param)
 end
 
 JSON.lower(e::ExtendedCherenkovEmitter) = Dict(
@@ -415,17 +428,14 @@ JSON.lower(e::ExtendedCherenkovEmitter) = Dict(
     "direction" => e.direction,
     "time" => e.time,
     "photons" => e.photons,
-    "wl_range" => e.spectrum.wl_range,
     "long_param" => e.long_param,
 )
 
-
-struct PointlikeCherenkovEmitter{T, N} <: CherenkovEmitter{T}
+struct PointlikeCherenkovEmitter{T} <: CherenkovEmitter{T}
     position::SVector{3,T}
     direction::SVector{3,T}
     time::T
     photons::Int64
-    spectrum::CherenkovSpectrum{T, N}
 end
 
 function PointlikeCherenkovEmitter(
@@ -434,17 +444,11 @@ function PointlikeCherenkovEmitter(
     wl_range::Tuple{T, T}) where {T<:Real}
 
     photons = pois_rand(total_lightyield(particle, medium, wl_range))
-    spectrum = CherenkovSpectrum(wl_range, 20, medium)
-    PointlikeCherenkovEmitter(particle.position, particle.direction, particle.time, photons, spectrum)
+    PointlikeCherenkovEmitter(particle.position, particle.direction, particle.time, photons)
 end
 
-function PointlikeCherenkovEmitter(
-    particle::Particle,
-    medium::MediumProperties,
-    photons::Integer,
-    wl_range::Tuple{T, T}) where {T<:Real}
-    spectrum = CherenkovSpectrum(wl_range, 20, medium)
-    PointlikeCherenkovEmitter(particle.position, particle.direction, particle.time, photons, spectrum)
+function PointlikeCherenkovEmitter(particle::Particle, photons::Integer)
+    PointlikeCherenkovEmitter(particle.position, particle.direction, particle.time, photons)
 end
 
 JSON.lower(e::PointlikeCherenkovEmitter) = Dict(
@@ -452,7 +456,6 @@ JSON.lower(e::PointlikeCherenkovEmitter) = Dict(
     "direction" => e.direction,
     "time" => e.time,
     "photons" => e.photons,
-    "wl_range" => e.spectrum.wl_range,
 )
 
 
@@ -474,12 +477,13 @@ function particle_to_lightsource(
 
 end
 
+#=
 function particle_to_elongated_lightsource!(
     particle::Particle{T},
     int_grid::AbstractArray{T},
     medium::MediumProperties,
     wl_range::Tuple{T,T},
-    output::Union{Zygote.Buffer,AbstractVector{PointlikeCherenkovEmitter{T, 20}}},
+    output::Union{Zygote.Buffer,AbstractVector{PointlikeCherenkovEmitter{T}}},
 ) where {T<:Real}
 
 
@@ -522,8 +526,7 @@ function particle_to_elongated_lightsource!(
             this_pos,
             particle.direction,
             this_time,
-            this_nph,
-            spectrum)
+            this_nph,)
 
         output[i-1] = this_src
     end
@@ -541,12 +544,12 @@ function particle_to_elongated_lightsource(
 
     int_grid = range(len_range[1], len_range[2], step=precision)
     n_steps = size(int_grid, 1)
-    output = Vector{PointlikeCherenkovEmitter{T, 20}}(undef, n_steps - 1)
+    output = Vector{PointlikeCherenkovEmitter{T}}(undef, n_steps - 1)
     particle_to_elongated_lightsource!(particle, int_grid, medium, wl_range, output)
 end
 
 
-
+=#
 
 
 
