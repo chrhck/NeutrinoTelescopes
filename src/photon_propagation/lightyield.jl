@@ -11,9 +11,9 @@ export total_lightyield
 
 export AngularEmissionProfile
 export PhotonSource, PointlikeIsotropicEmitter, ExtendedCherenkovEmitter, CherenkovEmitter, PointlikeCherenkovEmitter
-export AxiconeEmitter, PencilEmitter
+export AxiconeEmitter, PencilEmitter, PointlikeTimeRangeEmitter
 export cherenkov_ang_dist, cherenkov_ang_dist_int
-
+export split_source
 
 using Parameters: @with_kw
 using SpecialFunctions: gamma
@@ -367,6 +367,41 @@ end
 
 
 abstract type PhotonSource{T} end
+
+
+function split_source(source::T, parts::Integer) where {T <: PhotonSource}
+    if source.photons < parts
+        error("Cannot split source. Fewer photons than parts")
+    end
+
+    ph_split, remainder = divrem(source.photons, parts)
+    out_sources = Vector{T}(undef, parts)
+
+    for i in 1:parts
+
+        if i == parts
+            nph = ph_split + remainder
+        else
+            nph = ph_split
+        end
+
+        out_fields = []
+        for field in fieldnames(T)
+            if field == :photons
+                push!(out_fields, nph)
+            else
+                push!(out_fields, getfield(source, field))
+            end
+        end
+
+        out_sources[i] = T(out_fields...)
+    end
+
+    return out_sources
+end
+
+
+
 abstract type CherenkovEmitter{T} <: PhotonSource{T} end
 
 struct AxiconeEmitter{T} <: PhotonSource{T}
@@ -384,13 +419,13 @@ struct PencilEmitter{T} <: PhotonSource{T}
     photons::Int64
 end
 
-
-
 struct PointlikeIsotropicEmitter{T} <: PhotonSource{T}
     position::SVector{3,T}
     time::T
     photons::Int64
 end
+
+
 
 
 function PointlikeIsotropicEmitter(position::SVector{3, T}, time::T, photons::Int64) where {T<:Real}
@@ -402,6 +437,13 @@ JSON.lower(e::PointlikeIsotropicEmitter) = Dict(
     "time" => e.time,
     "photons" => e.photons,
 )
+
+struct PointlikeTimeRangeEmitter{T} <: PhotonSource{T}
+    position::SVector{3,T}
+    time_range::Tuple{T, T}
+    photons::Int64
+end
+
 
 
 struct ExtendedCherenkovEmitter{T} <: CherenkovEmitter{T}

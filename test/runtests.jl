@@ -8,6 +8,17 @@ using DataStructures
 
 @testset "NeutrinoTelescopes.jl" begin
 
+    @testset "LightYield" begin
+        @testset "Sources" begin
+            src = PointlikeTimeRangeEmitter(
+                @SVector[0.0f0, 0f0, 0.7f0],
+                (0f0, Float32(1E6)),
+                Int64(1E10)
+            )
+            @test src.photons == sum([s.photons for s in split_source(src, 1005)])
+        end
+    end
+
     @testset "Utils" begin
 
         @testset "Rotations" begin
@@ -33,7 +44,7 @@ using DataStructures
                 dir_2 = sph_to_cart(θ_2, ϕ_2)
                 @test all(apply_rot(dir_1, e_z, dir_2) .≈ rot_to_ez_fast(dir_1, dir_2))
                 @test all(apply_rot(e_z, dir_1, dir_2) .≈ rot_from_ez_fast(dir_1, dir_2))
-           
+
             end
 
 
@@ -75,11 +86,11 @@ using DataStructures
         end
 
         @testset "cart_to_sph" begin
-        
+
             let theta = 0.3, phi=1.5
                 @test all(cart_to_sph(sph_to_cart(theta, phi)) .≈ (theta, phi))
             end
-        
+
         end
 
         @testset "CategoricalSetDistribution" begin

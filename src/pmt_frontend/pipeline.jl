@@ -24,6 +24,7 @@ export STD_PMT_CONFIG, PMTConfig
 export make_reco_pulses
 export calc_gamma_shape_mean_fwhm
 export apply_tt, apply_tt!, subtract_mean_tt, subtract_mean_tt!
+export plot_hits, plot_pmt_map, map_f_over_pmts
 
 
 
@@ -88,7 +89,7 @@ STD_PMT_CONFIG = PMTConfig(
 function resample_simulation(hit_times, total_weights, downsample=1.)
     wsum = sum(total_weights)
     norm_weights = ProbabilityWeights(copy(total_weights), wsum)
-    nhits = pois_rand(wsum*downsample)
+    nhits = min(pois_rand(wsum*downsample), length(hit_times))
     sample(hit_times, norm_weights, nhits; replace=false)
 end
 
@@ -150,4 +151,100 @@ function make_reco_pulses(results::AbstractDataFrame , pmt_config::PMTConfig=STD
       ) |>
       unfold_waveform(_, pmt_config.pulse_model_filt, pmt_config.unf_pulse_res, 0.2, :fnnls)
 end
+
+function plot_hits(target, groups...; ylabel="", title="")
+    l = grid(4, 4)
+    plots = []
+
+    coords = rad2deg.(target.pmt_coordinates)
+
+    for (i, (theta, phi)) in enumerate(eachcol(coords))
+        p = plot(title=format("θ={:.2f}, ϕ={:.2f}", theta, phi), titlefontsize=8, )
+
+        for grp in groups
+            this_hits = get(grp, (pmt_id=i,), nothing)
+
+            if !isnothing(this_hits)
+                histogram!(p, this_hits[:, :time], bins=70:1:150, xlabel="Time (ns)", #yscale=:log10,
+                #ylim=(0.1, 5000),
+                label="",
+                yscale=:log10, ylim=(0.5, 1000),
+                alpha=0.7,
+                ylabel=ylabel,
+                margin=3.2Plots.mm, xlabelfontsize=8, ylabelfontsize=8,
+                legend_position=:outertopright,
+                #legend_columns=2,
+                legendfontsize=6,
+                )
+            end
+        end
+
+        push!(plots, p)
+
+    end
+    return plot(plots..., layout=l, size=(1200, 800), plot_title=title)
+end
+
+function plot_pmt_map(target, xmaps... ; labels, ylabel="", title="")
+    l = grid(4, 4)
+    plots = []
+
+    coords = rad2deg.(target.pmt_coordinates)
+    first = true
+    for (i, (theta, phi)) in enumerate(eachcol(coords))
+        if first
+            p = plot(title=format("θ={:.2f}, ϕ={:.2f}", theta, phi), titlefontsize=8,
+                     legend_column=2,
+                     legendfontsize=6,
+                     legend_position=:best)
+        else
+            p = plot(title=format("θ={:.2f}, ϕ={:.2f}", theta, phi), titlefontsize=8,
+                     legend_position=false)
+        end
+        first = false
+
+
+        for (xmap, label) in zip(xmaps, labels)
+
+            x = get(xmap, i, nothing)
+
+            if isnothing(x)
+                continue
+            end
+            plot!(p, x, label=label, ylabel=ylabel, xlabel="Time (ns)",
+                margin=3.2Plots.mm, xlabelfontsize=8, ylabelfontsize=8,
+                #legend_position=:outertopright,
+               )
+        end
+        push!(plots, p)
+
+    end
+    return plot(plots..., layout=l, size=(1200, 800), plot_title=title)
+end
+
+
+function map_f_over_pmts(target, f, input)
+    out_d = []
+    for pmt_id in 1:get_pmt_count(target)
+        if typeof(input) <: GroupedDataFrame
+            in = get(input, (pmt_id=pmt_id,), nothing)
+        else
+            in = get(input, pmt_id, nothing)
+        end
+        if !isnothing(in)
+            out = f(in)
+            push!(out_d, (pmt_id, out))
+        else
+            push!(out_d, (pmt_id, nothing))
+        end
+
+    end
+
+    return Dict(out_d)
+
+end
+
+
+
+
 end

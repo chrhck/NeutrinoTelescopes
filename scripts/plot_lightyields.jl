@@ -1,40 +1,38 @@
 using Plots
 using Traceur
 using NeutrinoTelescopes
-using NeutrinoTelescopes.Spectral
-using NeutrinoTelescopes.Medium
-using NeutrinoTelescopes.LightYield
-using NeutrinoTelescopes.Emission
-using NeutrinoTelescopes.Utils
 using StaticArrays
 
 
 log_energies = 2:0.1:8
-zs = (0:0.1:30.0)# m
-medium = make_cascadia_medium_properties(Float64)
+zs = (0:0.1:20.0)# m
+medium = make_cascadia_medium_properties(0.99)
 
 # Plot longitudinal profile
-plot(zs, longitudinal_profile.(Ref(1E3), zs, Ref(medium), Ref(LightYield.EMinus)), label="1E3 GeV", title="Longitudinal Profile")
-plot!(zs, longitudinal_profile.(Ref(1E5), zs, Ref(medium), Ref(LightYield.EMinus)), label="1E5 GeV")
+plot(zs, longitudinal_profile.(Ref(1E3), zs, Ref(medium), Ref(PEMinus)), label="1E3 GeV",
+    ylabel="PDF", title="Longitudinal Profile", dpi=150)
+p = plot!(zs, longitudinal_profile.(Ref(1E6), zs, Ref(medium), Ref(PEMinus)), label="1E6 GeV",
+          xlabel="Distance along axis (m)")
+savefig(p, joinpath(@__DIR__, "../figures/long_profile_comp.png"))
 
-radiation_length(medium)
-Medium.density(medium)
 
 # Show fractional contribution for a segment of shower depth
-frac_contrib = fractional_contrib_long(1E5, zs, medium, LightYield.EMinus)
-plot(zs, frac_contrib, linetype=:steppost, label="", ylabel="Fractional light yield")
-sum(frac_contrib)
+frac_contrib = fractional_contrib_long(1E5, zs, medium, PEMinus)
 
-ftamm_norm = frank_tamm_norm((200, 800), wl -> get_refractive_index(wl, medium))
-light_yield = cherenkov_track_length.(1E5, LightYield.EMinus)
+
+plot(zs, frac_contrib, linetype=:steppost, label="", ylabel="Fractional light yield")
+
+ftamm_norm = frank_tamm_norm((200., 800.), wl -> refractive_index(wl, medium))
+light_yield = cherenkov_track_length.(1E5, PEMinus)
 
 plot(zs, frac_contrib .* light_yield, linetype=:steppost, label="", ylabel="Light yield per segment")
 
-# Calculate Cherenkov track length as function of energy 
-tlens = cherenkov_track_length.((10 .^ log_energies), LightYield.EMinus)
+
+# Calculate Cherenkov track length as function of energy
+tlens = cherenkov_track_length.((10 .^ log_energies), PEMinus)
 plot(log_energies, tlens, yscale=:log10, xlabel="Log10(E/GeV)", ylabel="Cherenkov track length")
 
-total_lys = frank_tamm_norm((200.0, 800.0), wl -> get_refractive_index(wl, medium)) * tlens
+total_lys = frank_tamm_norm((200.0, 800.0), wl -> refractive_index(wl, medium)) * tlens
 
 plot(log_energies, total_lys, yscale=:log10, ylabel="Number of photons", xlabel="log10(Energy/GeV)")
 
@@ -58,7 +56,7 @@ plot!(lambdas[2:end], hobo_diff)
 
 plot(group_velocity.(lambdas, Ref(medium)))
 
-angularDist_a = 0.39 
+angularDist_a = 0.39
 angularDist_b = 2.61
 
 angularDist_I = 1. - exp(-angularDist_b * 2^angularDist_a)

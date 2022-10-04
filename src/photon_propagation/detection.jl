@@ -18,9 +18,10 @@ export area_acceptance
 
 const PROJECT_ROOT = pkgdir(Detection)
 
-abstract type PhotonTarget{T<:Real} end
+abstract type PhotonTarget end
+abstract type PixelatedTarget <: PhotonTarget end
 
-struct DetectionSphere{T<:Real} <: PhotonTarget{T}
+struct DetectionSphere{T<:Real} <: PhotonTarget
     position::SVector{3,T}
     radius::T
     n_pmts::Int64
@@ -28,12 +29,13 @@ struct DetectionSphere{T<:Real} <: PhotonTarget{T}
 end
 
 
-struct MultiPMTDetector{T<:Real, N, L} <: PhotonTarget{T}
+struct MultiPMTDetector{T<:Real, N, L} <: PixelatedTarget
     position::SVector{3,T}
     radius::T
     pmt_area::T
     pmt_coordinates::SMatrix{2, N, T, L}
 end
+
 
 JSON.lower(d::MultiPMTDetector) = Dict(
     "pos"=>d.position,
@@ -44,66 +46,52 @@ JSON.lower(d::MultiPMTDetector) = Dict(
 get_pmt_count(det::DetectionSphere) = 1
 get_pmt_count(det::MultiPMTDetector) = size(det.pmt_coordinates, 2)
 
-check_pmt_hit(::SVector{3, <:Real}, ::DetectionSphere) = 1
 
-function check_pmt_hit(
-    position::SVector{3, <:Real},
-    target::MultiPMTDetector{<:Real},
+function get_pmt_positions(
+    target::PixelatedTarget,
     orientation::Rotation{3, <:Real})
-
 
     pmt_positions::Vector{SVector{3, eltype(target.pmt_coordinates)}} = [
         orientation * sph_to_cart(det_θ, det_ϕ)
         for (det_θ, det_ϕ) in eachcol(target.pmt_coordinates)
     ]
 
-    pmt_radius = sqrt(target.pmt_area / π)
-    opening_angle = asin(pmt_radius / target.radius)
+    return pmt_positions
+end
 
-    tpos = convert(SVector{3, Float64}, target.position)
-    rel_pos = position - tpos
-    rel_pos = rel_pos / norm(rel_pos)
+function check_pmt_hit(
+    rel_hit_position::SVector{3, <:Real},
+    pmt_positions::AbstractVector{T},
+    opening_angle::Real
+) where {T <: AbstractVector{<:Real}}
 
-    for (i, pmtpos) in enumerate(pmt_positions)
-        if acos(dot(rel_pos, pmtpos)) < opening_angle
-            return i
+    for (j, pmtpos) in enumerate(pmt_positions)
+        if acos(clamp(dot(rel_hit_position, pmtpos), -1., 1.)) < opening_angle
+            return j
         end
     end
     return 0
 end
 
+check_pmt_hit(::SVector{3, <:Real}, ::DetectionSphere) = 1
+
 function check_pmt_hit(
-    positions::U,
-    target::MultiPMTDetector{<:Real},
-    orientation::Rotation{3, <:Real}) where {T <: SVector{3, <:Real}, U <: AbstractVector{T} }
+    hit_positions::AbstractVector{T},
+    target::PixelatedTarget,
+    orientation::Rotation{3, <:Real}) where {T <: SVector{3, <:Real}}
 
-    #orient_R = calc_rot_matrix(SA[0., 0., 1.], orientation)
-    pmt_positions::Vector{SVector{3, eltype(target.pmt_coordinates)}} = [
-        orientation * sph_to_cart(det_θ, det_ϕ)
-        for (det_θ, det_ϕ) in eachcol(target.pmt_coordinates)
-    ]
-
+    pmt_positions = get_pmt_positions(target, orientation)
     pmt_radius = sqrt(target.pmt_area / π)
     opening_angle = asin(pmt_radius / target.radius)
 
     tpos = convert(SVector{3, Float64}, target.position)
-    pmt_ids = zeros(Int64, length(positions))
+    rel_pos = hit_positions .- Ref(tpos)
+    rel_pos = rel_pos ./ norm.(rel_pos)
+    pmt_hit_ids = check_pmt_hit.(rel_pos, Ref(pmt_positions), Ref(opening_angle))
 
-    for (i, pos) in enumerate(positions)
-        rel_pos = pos - tpos
-        rel_pos = rel_pos / norm(rel_pos)
-
-        for (j, pmtpos) in enumerate(pmt_positions)
-            if acos(clamp(dot(rel_pos, pmtpos), -1., 1.)) < opening_angle
-                pmt_ids[i] = j
-                break
-            end
-        end
-    end
-    pmt_ids
+    return pmt_hit_ids
 
 end
-
 
 
 function make_pom_pmt_coordinates(T::Type)
