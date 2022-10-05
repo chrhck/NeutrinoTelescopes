@@ -10,7 +10,63 @@ using LinearAlgebra
 using Distributions
 using BenchmarkTools
 
-using Waterlily
+
+function make_biolumi_sources(
+    n_pos::Integer,
+    n_ph::Integer,
+    trange::Float64)
+    sources = Vector{PointlikeTimeRangeEmitter}(undef, n_pos)
+
+    for i in 1:n_pos
+
+        pos_x::Float32 = 0
+        pos_y::Float32 = 0
+        pos_z::Float32 = 0
+
+        if i < 20
+            pos_z = rand([-1, 1]) * rand(Uniform(0.3, 3))
+            pos_x = rand(Uniform(0.1, 1))
+            pos_y = rand(Uniform(-0.2, 0.2))
+
+
+        else
+            pos_z = rand(Normal(0, 1))
+            pos_x = rand(Uniform(0.5, 5))
+            pos_y = rand(Uniform(-1, 1))
+        end
+
+        sources[i] = PointlikeTimeRangeEmitter(
+            @SVector[pos_x, pos_y, pos_z],
+            (0., trange),
+            Int64(n_ph)
+        )
+    end
+
+    return sources
+end
+
+function make_random_sources(
+    n_pos::Integer,
+    n_ph::Integer,
+    trange::Real,
+    radius::Real)
+    sources = Vector{PointlikeTimeRangeEmitter}(undef, n_pos)
+
+
+    radii = rand(Uniform(0, 1), n_pos) .^(1/3) .* (radius - 0.3) .+ 0.3
+    thetas = acos.(rand(Uniform(-1, 1), n_pos))
+    phis = rand(Uniform(0, 2*π), n_pos)
+
+    pos = Float32.(radii) .* sph_to_cart.(Float32.(thetas), Float32.(phis))
+
+    sources = PointlikeTimeRangeEmitter.(
+        pos,
+        Ref((0., trange)),
+        Ref(Int64(n_ph))
+    )
+
+    return sources
+end
 
 function lc_trigger(sorted_hits, time_window)
 
@@ -47,6 +103,73 @@ function lc_trigger(sorted_hits, time_window)
     return triggers
 end
 
+function plot_sources(sources)
+
+    scatter([0], [0], [0], marksersize=10, markercolor=:black,
+    xlim=(-5, 5), ylim=(-5, 5), zlim=(-5, 5))
+
+    scatter!(
+        [src.position[1] for src in sources],
+        [src.position[2] for src in sources],
+        [src.position[3] for src in sources]
+        )
+
+    plot!([0, 0], [0, 0], [-5, 5])
+end
+
+
+function calc_trigger(hits, timewindow)
+    sorted_hits = sort(hits, [:time])
+    triggers = lc_trigger(sorted_hits, timewindow)
+    coincs = []
+    for trigger in triggers
+        push!(coincs, unique(trigger[:, :pmt_id]))
+    end
+    return coincs
+end
+
+
+function sim_biolumi(target, sources)
+
+    photons = propagate_photons(sources, target, medium, mono_spec)
+    hits = make_hits_from_photons(photons, target, medium, orientation)
+    all_hits = resample_simulation(hits)
+    all_hits[!, :time] = convert.(Float64, all_hits[:, :time])
+    return all_hits
+
+end
+
+
+
+function run_sim(target, trange::Number, n::Integer, bio_nph::Number, scale::Number)
+    df = DataFrame(bio=Float64[], rnd=Float64[])
+    coincs = []
+    coincs_rnd = []
+    for _ in 1:n
+
+        sources = make_biolumi_sources(100, Int64(bio_nph), trange)
+        rnd_sources = make_random_sources(200, Int64(ceil(bio_nph*scale)), trange, 5)
+
+        all_hits = sim_biolumi(target, sources)
+        rate = nrow(all_hits) / trange * 1E9
+      
+
+        all_hits_rnd = sim_biolumi(target, rnd_sources)
+        rate_rnd = nrow(all_hits_rnd) / trange * 1E9
+
+        if get_pmt_count(target) > 1
+            triggers = calc_trigger(all_hits)
+            triggers_rnd = calc_trigger(all_hits_rnd)
+
+            push!(coincs, triggers)
+            push!(coincs_rnd, triggers_rnd)
+        end
+        push!(df, (rate, rate_rnd))
+
+    end
+
+    return df, coincs, coincs_rnd
+end
 
 
 
@@ -69,84 +192,52 @@ target_1pmt = MultiPMTDetector(
     pmt_coord
 )
 
-divrem(1E10, 9)
-
-prop_source_isospan = PointlikeTimeRangeEmitter(
-    @SVector[0.0f0, 0f0, 3f0],
-    (0f0, Float32(1E6)),
-    Int64(1E9)
-)
-
-sources = split_source(prop_source_isospan, 3)
-
-
 mono_spec = Monochromatic(420f0)
 orientation = RotMatrix3(I)
 
-
-function make_biolumi_sources(
-    n_pos::Integer,
-    n_ph::Integer)
-    sources = Vector{PointlikeTimeRangeEmitter}(undef, n_pos)
-
-    for i in 1:n_pos
-
-        pos_x::Float32 = 0
-        pos_y::Float32 = 0
-        pos_z::Float32 = 0
-
-        if i < 20
-            pos_z = rand([-1, 1]) * rand(Uniform(0.3, 3))
-            pos_x = rand(Uniform(0.3, 2))
-            pos_y = rand(Uniform(-0.2, 0.2))
+trange = 1E8
 
 
-        else
-            pos_z = rand(Normal(0, 1))
-            pos_x = rand(Uniform(0.5, 5))
-            pos_y = rand(Uniform(-1, 1))
-        end
-
-        sources[i] = PointlikeTimeRangeEmitter(
-            @SVector[pos_x, pos_y, pos_z],
-            (0f0, Float32(1E7)),
-            Int64(n_ph)
-        )
-    end
-
-    return sources
-end
+rates, _, _ = run_sim(target_1pmt, trange, 100, 1E7, 1.985)
+histogram(log10.(rates[:, :bio]),  alpha=0.7, )
+histogram!(log10.(rates[:, :rnd]),  alpha=0.7,)
 
 
-function sim_biolumi(target, sources)
+mean_rates = mapcols(mean, rates)
+mean_rates[:, :bio] / mean_rates[:, :rnd]
 
-    photons = propagate_photons(sources, target, medium, mono_spec)
-    hits = make_hits_from_photons(photons, target, medium, orientation)
-    all_hits = resample_simulation(hits)
-    all_hits[!, :time] = convert.(Float64, all_hits[:, :time])
-    return all_hits
+mean_rates
 
-end
+rates, t, trnd = run_sim(target, trange, 100, 1E7, 1.985)
 
-sources = make_biolumi_sources()
-
-scatter([0], [0], [0], marksersize=10, markercolor=:black,
-xlim=(-5, 5), ylim=(-5, 5), zlim=(-5, 5))
-
-scatter!(
-    [src.position[1] for src in sources],
-    [src.position[2] for src in sources],
-    [src.position[3] for src in sources]
-    )
-
-plot!([0, 0], [0, 0], [-5, 5])
+mean_rates_multi = mapcols(mean, rates)
+mean_rates_multi[:, :bio] / mean_rates_multi[:, :rnd]
 
 
-all_hits = sim_biolumi(target_1pmt)
+coinc_levels = vcat([length.(c) for c in t]...)
+coinc_levels_rnd = vcat([length.(c) for c in trnd]...)
 
-rate_1pmt = nrow(all_hits) / 1E7 * 1E9
+scatterhist(
+    coinc_levels, weights=fill((1E9/(trange * length(t))),
+    length(coinc_levels)),
+    yscale=:log10,
+    bins=1:7,
+    ylim=(1E-2, 1E7),
+    label="Biolumi",
+    xlabel="Coincidence Level",
+    title=format("Single-PMT Rate: {:.2f} kHz", mean_rates[1, :bio] / 1000))
+p = scatterhist!(
+    coinc_levels_rnd,
+    weights=fill((1E9/(trange * length(trnd))),
+    length(coinc_levels_rnd)),
+    yscale=:log10,
+    label="Random",
+    bins=1:7,
+    ylabel="Rate (Hz)")
 
-all_hits = sim_biolumi(target)
+savefig(p, joinpath(@__DIR__, "../figures/biolumi_coinc_exam.png"))
+
+
 sorted_hits = sort(all_hits, [:time])
 
 counts = combine(
@@ -154,13 +245,12 @@ counts = combine(
     nrow => :counts
 )
 
-counts[!, :rates] = counts[:, :counts] / 1E7 * 1E9
+counts[!, :rates] = counts[:, :counts] / trange * 1E9
 counts
-
 
 triggers = lc_trigger(sorted_hits, 20)
 coincs = []
 for trigger in triggers
     push!(coincs, unique(trigger[:, :pmt_id]))
 end
-histogram(length.(coincs), yscale=:log10, weights=fill(1E9 / 1E7, length(coincs)))
+histogram(length.(coincs), yscale=:log10, weights=fill(1E9 / 1E9, length(coincs)))

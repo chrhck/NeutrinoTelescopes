@@ -62,10 +62,10 @@ CUDA-optimized version of Henyey-Greenstein scattering in one plane.
 end
 
 
-struct PhotonState{T}
+struct PhotonState{T, U}
     position::SVector{3, T}
     direction::SVector{3, T}
-    time::T
+    time::U
     wavelength::T
 end
 
@@ -122,7 +122,7 @@ end
     PhotonState(pos, dir, source.time, wl)
 end
 
-@inline function initialize_photon_state(source::PointlikeTimeRangeEmitter{T}, ::MediumProperties, spectrum::Spectrum) where {T <: Real}
+@inline function initialize_photon_state(source::PointlikeTimeRangeEmitter{T, U}, ::MediumProperties, spectrum::Spectrum) where {T <: Real, U<:Real}
     wl = initialize_wavelength(spectrum)
     pos = source.position
     dir = initialize_direction_isotropic(T)
@@ -247,7 +247,7 @@ function cuda_propagate_photons!(
     out_directions::CuDeviceVector{SVector{3,T}},
     out_wavelengths::CuDeviceVector{T},
     out_dist_travelled::CuDeviceVector{T},
-    out_times::CuDeviceVector{T},
+    out_times::CuDeviceVector{<:Real},
     out_stack_pointers::CuDeviceVector{Int64},
     out_n_ph_simulated::CuDeviceVector{Int64},
     out_err_code::CuDeviceVector{Int32},
@@ -360,7 +360,7 @@ function cuda_propagate_photons_no_local_cache!(
     out_directions::CuDeviceVector{SVector{3,T}},
     out_wavelengths::CuDeviceVector{T},
     out_dist_travelled::CuDeviceVector{T},
-    out_times::CuDeviceVector{T},
+    out_times::CuDeviceVector{<:Real},
     out_stack_pointer::CuDeviceVector{Int64},
     out_n_ph_simulated::CuDeviceVector{Int64},
     out_err_code::CuDeviceVector{Int32},
@@ -707,13 +707,13 @@ function initialize_photon_arrays(stack_length::Integer, blocks, type::Type)
 end
 
 
-function initialize_photon_arrays(stack_length::Integer, type::Type)
+function initialize_photon_arrays(stack_length::Integer, type::Type, time_type::Type)
     (
         CuVector(zeros(SVector{3,type}, stack_length)), # position
         CuVector(zeros(SVector{3,type}, stack_length)), # direction
         CuVector(zeros(type, stack_length)), # wavelength
         CuVector(zeros(type, stack_length)), # dist travelled
-        CuVector(zeros(type, stack_length)), # time
+        CuVector(zeros(time_type, stack_length)), # time
         CuVector(ones(Int64, 1)), # stack_idx
         CuVector(zeros(Int64, 1)) # nphotons_simulated
     )
@@ -776,11 +776,13 @@ function run_photon_prop_no_local_cache(
     sources::AbstractVector{<:PhotonSource},
     target::PhotonTarget,
     medium::MediumProperties,
-    spectrum::Spectrum
+    spectrum::Spectrum;
+    time_type::Type=Float32
+
 )
     avail_mem = CUDA.totalmem(collect(CUDA.devices())[1])
-    max_total_stack_len = calculate_max_stack_size(0.5*avail_mem)
-    positions, directions, wavelengths, dist_travelled, times, stack_idx, n_ph_sim = initialize_photon_arrays(max_total_stack_len, Float32)
+    max_total_stack_len = calculate_max_stack_size(0.7*avail_mem)
+    positions, directions, wavelengths, dist_travelled, times, stack_idx, n_ph_sim = initialize_photon_arrays(max_total_stack_len, Float32, time_type)
     err_code = CuVector(zeros(Int32, 1))
 
 
