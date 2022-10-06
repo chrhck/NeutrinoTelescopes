@@ -8,7 +8,9 @@ using Formatting
 import Pipe: @pipe
 using LinearAlgebra
 using Distributions
+using Random
 using BenchmarkTools
+using StatsBase
 
 
 function make_biolumi_sources(
@@ -71,7 +73,6 @@ end
 function lc_trigger(sorted_hits, time_window)
 
     triggers = []
-
     i = 1
     while i < nrow(sorted_hits)
 
@@ -98,10 +99,39 @@ function lc_trigger(sorted_hits, time_window)
 
         i = j
     end
-
-
     return triggers
 end
+
+function calc_coincs_from_trigger(sorted_hits, timewindow)
+
+    triggers = lc_trigger(sorted_hits, timewindow)
+    coincs = Vector{Int64}()
+    for trigger in triggers
+        push!(coincs, length(unique(trigger[:, :pmt_id])))
+    end
+    return coincs
+end
+
+
+function count_coinc_in_tw(sorted_hits, time_window)
+
+    t_start = sorted_hits[1, :time]
+
+    window_cnt = Dict{Int64, Set{Int64}}()
+
+    for i in 1:nrow(sorted_hits)
+        window_id = div((sorted_hits[i, :time] - t_start), time_window)
+        if !haskey(window_cnt, window_id)
+            window_cnt[window_id] = Set([])
+        end
+
+        push!(window_cnt[window_id], sorted_hits[i, :pmt_id])
+    end
+
+    return length.(values(window_cnt))
+
+end
+
 
 function plot_sources(sources)
 
@@ -118,17 +148,6 @@ function plot_sources(sources)
 end
 
 
-function calc_trigger(hits, timewindow)
-    sorted_hits = sort(hits, [:time])
-    triggers = lc_trigger(sorted_hits, timewindow)
-    coincs = []
-    for trigger in triggers
-        push!(coincs, unique(trigger[:, :pmt_id]))
-    end
-    return coincs
-end
-
-
 function sim_biolumi(target, sources)
 
     photons = propagate_photons(sources, target, medium, mono_spec)
@@ -140,37 +159,58 @@ function sim_biolumi(target, sources)
 end
 
 
+function run_sim(
+        target,
+        src_func::Function,
+        trange::Number,
+        n_ph::Number)
+    sources = src_func(Int64(ceil(n_ph)), trange)
+    all_hits = sim_biolumi(target, sources)
 
-function run_sim(target, trange::Number, n::Integer, bio_nph::Number, scale::Number)
-    df = DataFrame(bio=Float64[], rnd=Float64[])
-    coincs = []
-    coincs_rnd = []
-    for _ in 1:n
+    downsampling = 10 .^(0:0.1:2)
 
-        sources = make_biolumi_sources(100, Int64(bio_nph), trange)
-        rnd_sources = make_random_sources(200, Int64(ceil(bio_nph*scale)), trange, 5)
+    results = []
 
-        all_hits = sim_biolumi(target, sources)
-        rate = nrow(all_hits) / trange * 1E9
-      
+    for ds in downsampling
 
-        all_hits_rnd = sim_biolumi(target, rnd_sources)
-        rate_rnd = nrow(all_hits_rnd) / trange * 1E9
+        if ds ≈ 1
+            hits = all_hits
+        else
+            n_sel = Int64(ceil(nrow(all_hits) / ds))
+            hits = all_hits[shuffle(1:nrow(all_hits))[1:n_sel], :]
+        end
+
+        rate = nrow(hits) / trange * 1E9
 
         if get_pmt_count(target) > 1
-            triggers = calc_trigger(all_hits)
-            triggers_rnd = calc_trigger(all_hits_rnd)
+            windows = [10, 15, 20, 15]
+            sorted_hits = sort(hits, [:time])
 
-            push!(coincs, triggers)
-            push!(coincs_rnd, triggers_rnd)
+            for window in windows
+                coincs_trigger = calc_coincs_from_trigger(sorted_hits, window)
+                coincs_fixed_w = count_coinc_in_tw(sorted_hits, window)
+
+                ntup = (
+                    ds_rate=ds,
+                    hit_rate=rate,
+                    time_window=window,
+                    coincs_trigger=coincs_trigger,
+                    coincs_fixed_w=coincs_fixed_w)
+                push!(results, ntup)
+            end
+        else
+            ntup = (
+                ds_rate=ds,
+                hit_rate=rate,
+            )
+            push!(results, ntup)
+
         end
-        push!(df, (rate, rate_rnd))
 
     end
 
-    return df, coincs, coincs_rnd
+    return DataFrame(results)
 end
-
 
 
 medium = make_cascadia_medium_properties(0.99f0)
@@ -195,27 +235,88 @@ target_1pmt = MultiPMTDetector(
 mono_spec = Monochromatic(420f0)
 orientation = RotMatrix3(I)
 
-trange = 1E8
+trange = 1E7
 
 
-rates, _, _ = run_sim(target_1pmt, trange, 100, 1E7, 1.985)
-histogram(log10.(rates[:, :bio]),  alpha=0.7, )
-histogram!(log10.(rates[:, :rnd]),  alpha=0.7,)
+src_func_bio = (nph, trange) -> make_biolumi_sources(100, nph, trange)
+src_func_rnd = (nph, trange) -> make_random_sources(100, nph, trange, 5)
+
+n_sim = 50
+
+results_bio_1pmt = vcat([run_sim(target_1pmt, src_func_bio, trange, 1E7) for i in 1:50]...)
+results_rnd_1pmt = vcat([run_sim(target_1pmt, src_func_rnd, trange, 1E7) for i in 1:50]...)
+
+rates_bio = groupby(results_bio_1pmt, :ds_rate)[(1.0, )][:, :hit_rate]
+rates_rnd = groupby(results_rnd_1pmt, :ds_rate)[(1.0, )][:, :hit_rate]
+
+histogram(log10.(rates_bio),  alpha=0.7, )
+histogram!(log10.(rates_rnd),  alpha=0.7,)
+
+mean_hit_rate_1pmt_bio = combine(groupby(results_bio_1pmt, :ds_rate), :hit_rate => mean)
+mean_hit_rate_1pmt_rnd = combine(groupby(results_rnd_1pmt, :ds_rate), :hit_rate => mean)
+
+scale_factor = mean_hit_rate_1pmt_bio[1, :hit_rate_mean] / mean_hit_rate_1pmt_rnd[1, :hit_rate_mean]
+
+n_sims = 10
+
+results_bio = vcat([run_sim(target, src_func_bio, trange, 1E7) for i in 1:n_sims]...)
+results_rnd = vcat([run_sim(target, src_func_rnd, trange, 1E7*scale_factor) for i in 1:n_sims]...)
+
+function count_lc_levels(a)
+    return [counts(vcat(a...), 2:10)]
+end
+
+grpd = groupby(groupby(results_bio, :time_window)[3], :ds_rate)
+coinc_trigger = combine(grpd, :coincs_trigger => count_lc_levels => AsTable)
+coinc_trigger = innerjoin(coinc_trigger, mean_hit_rate_1pmt, on=:ds_rate)
+
+p = plot()
+for (i, lc_level) in enumerate(2:5)
+    col_sym = Symbol(format("x{:d}", i))
+    plot!(
+        p,
+        coinc_trigger[:, :hit_rate_mean],
+        coinc_trigger[:, col_sym] .* 1E9 / (trange * n_sims),
+        label=lc_level,
+        yscale=:log10,
+        yrange=(10, 1E8),
+        xscale=:log10,
+        xlabel="Single PMT Rate",
+        ylabel="LC Rate",
+        legendtitle="LC Level",
+        legend=:topleft)
+end
+p
 
 
-mean_rates = mapcols(mean, rates)
-mean_rates[:, :bio] / mean_rates[:, :rnd]
+d = groupby(joined, :hit_rate)[15]
+grpd = groupby(d, :time_window)
 
-mean_rates
+p = plot()
+for key in keys(grpd)
+    combined_coincs = vcat(grpd[key][:, :coincs_trigger]...)
 
-rates, t, trnd = run_sim(target, trange, 100, 1E7, 1.985)
+    weights = fill(1E9 / trange, length(combined_coincs))
 
-mean_rates_multi = mapcols(mean, rates)
-mean_rates_multi[:, :bio] / mean_rates_multi[:, :rnd]
+    scatterhist!(
+        p,
+        combined_coincs,
+        weights=weights,
+        label=string(key[1]),
+        yscale=:log10,
+        bins = 1:9,
+        yrange=(1E-1, 1E8),
+        yticks = 10 .^ (0:2:8)
+        )
+end
+
+p
+@df histogram(:coincs_trigger, groupby=:timewindow, yscale=:log10)
 
 
-coinc_levels = vcat([length.(c) for c in t]...)
-coinc_levels_rnd = vcat([length.(c) for c in trnd]...)
+
+results_bio[1][1]
+
 
 scatterhist(
     coinc_levels, weights=fill((1E9/(trange * length(t))),
