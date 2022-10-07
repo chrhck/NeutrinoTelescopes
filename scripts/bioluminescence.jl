@@ -1,8 +1,7 @@
 using NeutrinoTelescopes
-using Plots
+using CairoMakie
 using StaticArrays
 using DataFrames
-using StatsPlots
 using Rotations
 using Formatting
 import Pipe: @pipe
@@ -150,6 +149,10 @@ end
 
 function sim_biolumi(target, sources)
 
+    medium = make_cascadia_medium_properties(0.99f0)
+    mono_spec = Monochromatic(420f0)
+    orientation = RotMatrix3(I)
+
     photons = propagate_photons(sources, target, medium, mono_spec)
     hits = make_hits_from_photons(photons, target, medium, orientation)
     all_hits = resample_simulation(hits)
@@ -164,6 +167,7 @@ function run_sim(
         src_func::Function,
         trange::Number,
         n_ph::Number)
+
     sources = src_func(Int64(ceil(n_ph)), trange)
     all_hits = sim_biolumi(target, sources)
 
@@ -180,7 +184,7 @@ function run_sim(
             hits = all_hits[shuffle(1:nrow(all_hits))[1:n_sel], :]
         end
 
-        rate = nrow(hits) / trange * 1E9
+        rate = nrow(hits) / trange * 1E9 # Rate in Hz
 
         if get_pmt_count(target) > 1
             windows = [10, 15, 20, 15]
@@ -213,7 +217,7 @@ function run_sim(
 end
 
 
-medium = make_cascadia_medium_properties(0.99f0)
+
 pmt_area = Float32((75e-3 / 2)^2*π)
 target_radius = 0.21f0
 target = MultiPMTDetector(
@@ -232,8 +236,7 @@ target_1pmt = MultiPMTDetector(
     pmt_coord
 )
 
-mono_spec = Monochromatic(420f0)
-orientation = RotMatrix3(I)
+
 
 trange = 1E7
 
@@ -241,52 +244,87 @@ trange = 1E7
 src_func_bio = (nph, trange) -> make_biolumi_sources(100, nph, trange)
 src_func_rnd = (nph, trange) -> make_random_sources(100, nph, trange, 5)
 
-n_sim = 50
+n_sim = 25
 
-results_bio_1pmt = vcat([run_sim(target_1pmt, src_func_bio, trange, 1E7) for i in 1:50]...)
-results_rnd_1pmt = vcat([run_sim(target_1pmt, src_func_rnd, trange, 1E7) for i in 1:50]...)
+results_bio_1pmt = vcat([run_sim(target_1pmt, src_func_bio, trange, 1E7) for i in 1:n_sim]...)
+results_rnd_1pmt = vcat([run_sim(target_1pmt, src_func_rnd, trange, 4.035E7) for i in 1:n_sim]...)
 
 rates_bio = groupby(results_bio_1pmt, :ds_rate)[(1.0, )][:, :hit_rate]
 rates_rnd = groupby(results_rnd_1pmt, :ds_rate)[(1.0, )][:, :hit_rate]
 
-histogram(log10.(rates_bio),  alpha=0.7, )
-histogram!(log10.(rates_rnd),  alpha=0.7,)
+f = Figure()
+ax = Axis(f[1, 1],
+    title = "Single PMT-Rates",
+    xlabel = "Log10(Rate)",
+    ylabel = "Count"
+)
+
+hist!(ax, log10.(rates_bio), label="Bio")
+hist!(ax, log10.(rates_rnd), label="Random")
+axislegend(ax)
+f
 
 mean_hit_rate_1pmt_bio = combine(groupby(results_bio_1pmt, :ds_rate), :hit_rate => mean)
 mean_hit_rate_1pmt_rnd = combine(groupby(results_rnd_1pmt, :ds_rate), :hit_rate => mean)
 
 scale_factor = mean_hit_rate_1pmt_bio[1, :hit_rate_mean] / mean_hit_rate_1pmt_rnd[1, :hit_rate_mean]
 
-n_sims = 10
+n_sims = 50
 
 results_bio = vcat([run_sim(target, src_func_bio, trange, 1E7) for i in 1:n_sims]...)
-results_rnd = vcat([run_sim(target, src_func_rnd, trange, 1E7*scale_factor) for i in 1:n_sims]...)
+results_rnd = vcat([run_sim(target, src_func_rnd, trange, 4.035E7) for i in 1:n_sims]...)
 
 function count_lc_levels(a)
     return [counts(vcat(a...), 2:10)]
 end
 
-grpd = groupby(groupby(results_bio, :time_window)[3], :ds_rate)
-coinc_trigger = combine(grpd, :coincs_trigger => count_lc_levels => AsTable)
-coinc_trigger = innerjoin(coinc_trigger, mean_hit_rate_1pmt, on=:ds_rate)
+function make_coinc_rate_plot(result_df, mean_hit_rate_1pmt)
 
-p = plot()
-for (i, lc_level) in enumerate(2:5)
-    col_sym = Symbol(format("x{:d}", i))
-    plot!(
-        p,
-        coinc_trigger[:, :hit_rate_mean],
-        coinc_trigger[:, col_sym] .* 1E9 / (trange * n_sims),
-        label=lc_level,
-        yscale=:log10,
-        yrange=(10, 1E8),
-        xscale=:log10,
-        xlabel="Single PMT Rate",
-        ylabel="LC Rate",
-        legendtitle="LC Level",
-        legend=:topleft)
+    grpd_tw = groupby(groupby(result_df, :time_window)[3], :ds_rate)
+
+    #linestyles = [:solid, :dash, :dot]
+
+    f = Figure()
+    ax = Axis(f[1, 1],
+        title = "",
+        xlabel = "Single PMT Rate",
+        ylabel = "LC Rate",
+        yscale = log10,
+        xscale = log10,
+        yminorticks = IntervalsBetween(8),
+        yminorticksvisible = true,
+        yminorgridvisible = true,
+
+
+    )
+
+    ylims!(ax, (1, 1E7))
+    xlims!(ax, (1E4, 1E6))
+
+
+    coinc_trigger = combine(grpd_tw, :coincs_trigger => count_lc_levels => AsTable)
+    coinc_trigger = innerjoin(coinc_trigger, mean_hit_rate_1pmt, on=:ds_rate)
+
+
+    for (i, lc_level) in enumerate(2:5)
+        col_sym = Symbol(format("x{:d}", i))
+
+        lines!(
+            ax,
+            coinc_trigger[:, :hit_rate_mean],
+            coinc_trigger[:, col_sym] .* (1E9 / (trange * n_sim)),
+            label=string(lc_level ))
+
+    end
+
+    f[1, 2] = Legend(f, ax, "LC Level", framevisible = false)
+
+    f
 end
-p
+
+make_coinc_rate_plot(results_bio, mean_hit_rate_1pmt_bio)
+
+make_coinc_rate_plot(results_rnd, mean_hit_rate_1pmt_rnd)
 
 
 d = groupby(joined, :hit_rate)[15]
