@@ -10,6 +10,9 @@ using Distributions
 using Random
 using BenchmarkTools
 using StatsBase
+using Parquet
+using JSON
+using Base.Iterators
 
 
 function make_biolumi_sources(
@@ -164,11 +167,10 @@ end
 
 function run_sim(
         target,
-        src_func::Function,
+        sources,
         trange::Number,
-        n_ph::Number)
+       )
 
-    sources = src_func(Int64(ceil(n_ph)), trange)
     all_hits = sim_biolumi(target, sources)
 
     downsampling = 10 .^(0:0.1:2)
@@ -226,6 +228,7 @@ target = MultiPMTDetector(
     pmt_area,
     make_pom_pmt_coordinates(Float32))
 
+    make_pom_pmt_coordinates(Float32)
 
 pmt_coord = @SMatrix zeros(Float32, 2, 1)
 
@@ -236,18 +239,57 @@ target_1pmt = MultiPMTDetector(
     pmt_coord
 )
 
-
+pmt_coord
 
 trange = 1E7
 
+function read_sources(path, trange, nph)
+    bio_pos = DataFrame(read_parquet(path))
+    bio_sources = Vector{PointlikeTimeRangeEmitter}()
+    for i in 1:nrow(bio_pos)
+        position = SVector{3, Float32}(Vector{Float32}(bio_pos[i, [:x, :y, :z]]))
+        sources = PointlikeTimeRangeEmitter(position, (0., trange), Int64(ceil(nph)))
+        push!(bio_sources, sources)
+    end
+    bio_sources
+end
 
-src_func_bio = (nph, trange) -> make_biolumi_sources(100, nph, trange)
-src_func_rnd = (nph, trange) -> make_random_sources(100, nph, trange, 5)
+
+Random.seed!(31338)
+bio_sources = [make_biolumi_sources(100, Int64(1E7), trange) for _ in 1:100]
+write_parquet(joinpath(@__DIR__, "../assets/bio_sources.parquet"),
+    DataFrame([(x=src.position[1], y=src.position[2], z=src.position[3]) for sources in bio_sources for src in sources]))
+
+
+bio_sources = collect(
+    partition(
+        read_sources(joinpath(@__DIR__, "../assets/bio_sources.parquet"), trange, 1E7),
+        100
+    )
+)
+
+nph_rnd = Int64(ceil(4.035E7))
+Random.seed!(31338)
+rnd_sources = [make_random_sources(100, nph_rnd, trange, 5) for _ in 1:100]
+write_parquet(joinpath(@__DIR__, "../assets/rnd_sources.parquet"),
+    DataFrame([(x=src.position[1], y=src.position[2], z=src.position[3]) for sources in rnd_sources for src in sources]))
+
+rnd_sources = collect(
+    partition(
+        read_sources(joinpath(@__DIR__, "../assets/rnd_sources.parquet"), trange, nph_rnd),
+        100
+    )
+)
+
 
 n_sim = 25
 
-results_bio_1pmt = vcat([run_sim(target_1pmt, src_func_bio, trange, 1E7) for i in 1:n_sim]...)
-results_rnd_1pmt = vcat([run_sim(target_1pmt, src_func_rnd, trange, 4.035E7) for i in 1:n_sim]...)
+results_bio_1pmt = vcat(
+    [run_sim(target_1pmt, sources, trange) for sources in bio_sources[1:n_sim]]...
+    )
+results_rnd_1pmt = vcat(
+    [run_sim(target_1pmt, sources, trange) for sources in rnd_sources[1:n_sim]]...
+    )
 
 rates_bio = groupby(results_bio_1pmt, :ds_rate)[(1.0, )][:, :hit_rate]
 rates_rnd = groupby(results_rnd_1pmt, :ds_rate)[(1.0, )][:, :hit_rate]
@@ -269,20 +311,22 @@ mean_hit_rate_1pmt_rnd = combine(groupby(results_rnd_1pmt, :ds_rate), :hit_rate 
 
 scale_factor = mean_hit_rate_1pmt_bio[1, :hit_rate_mean] / mean_hit_rate_1pmt_rnd[1, :hit_rate_mean]
 
-n_sims = 50
+n_sim = 5
 
-results_bio = vcat([run_sim(target, src_func_bio, trange, 1E7) for i in 1:n_sims]...)
-results_rnd = vcat([run_sim(target, src_func_rnd, trange, 4.035E7) for i in 1:n_sims]...)
+results_bio = vcat(
+    [run_sim(target, sources, trange) for sources in bio_sources[1:n_sim]]...
+    )
+results_rnd = vcat(
+    [run_sim(target, sources, trange) for sources in rnd_sources[1:n_sim]]...
+    )
+
 
 function count_lc_levels(a)
     return [counts(vcat(a...), 2:10)]
 end
 
-function make_coinc_rate_plot(result_df, mean_hit_rate_1pmt)
 
-    grpd_tw = groupby(groupby(result_df, :time_window)[3], :ds_rate)
-
-    #linestyles = [:solid, :dash, :dot]
+function make_all_coinc_rate_plot(res...)
 
     f = Figure()
     ax = Axis(f[1, 1],
@@ -302,19 +346,24 @@ function make_coinc_rate_plot(result_df, mean_hit_rate_1pmt)
     xlims!(ax, (1E4, 1E6))
 
 
-    coinc_trigger = combine(grpd_tw, :coincs_trigger => count_lc_levels => AsTable)
-    coinc_trigger = innerjoin(coinc_trigger, mean_hit_rate_1pmt, on=:ds_rate)
+    for (ls, (result_df, mean_hit_rate_1pmt)) in zip([:solid, :dashed], res)
+        grpd_tw = groupby(groupby(result_df, :time_window)[3], :ds_rate)
+        coinc_trigger = combine(grpd_tw, :coincs_trigger => count_lc_levels => AsTable)
+        coinc_trigger = innerjoin(coinc_trigger, mean_hit_rate_1pmt, on=:ds_rate)
 
 
-    for (i, lc_level) in enumerate(2:5)
-        col_sym = Symbol(format("x{:d}", i))
+        for (i, lc_level) in enumerate(2:5)
+            col_sym = Symbol(format("x{:d}", i))
 
-        lines!(
-            ax,
-            coinc_trigger[:, :hit_rate_mean],
-            coinc_trigger[:, col_sym] .* (1E9 / (trange * n_sim)),
-            label=string(lc_level ))
+            lines!(
+                ax,
+                coinc_trigger[:, :hit_rate_mean],
+                coinc_trigger[:, col_sym] .* (1E9 / (trange * n_sim)),
+                label=string(lc_level ),
+                linestyle=ls
+                )
 
+        end
     end
 
     f[1, 2] = Legend(f, ax, "LC Level", framevisible = false)
@@ -322,7 +371,17 @@ function make_coinc_rate_plot(result_df, mean_hit_rate_1pmt)
     f
 end
 
-make_coinc_rate_plot(results_bio, mean_hit_rate_1pmt_bio)
+
+
+make_all_coinc_rate_plot(
+    (results_bio, mean_hit_rate_1pmt_bio),
+    (results_rnd, mean_hit_rate_1pmt_rnd))
+
+
+
+f = Figure()
+
+ax = Axis(f[1, 1])
 
 make_coinc_rate_plot(results_rnd, mean_hit_rate_1pmt_rnd)
 
