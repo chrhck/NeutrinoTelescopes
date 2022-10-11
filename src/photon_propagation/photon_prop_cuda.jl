@@ -803,6 +803,14 @@ function run_photon_prop_no_local_cache(
 end
 
 
+function propagate_photons(
+    source::PhotonSource,
+    target::PhotonTarget,
+    medium::MediumProperties,
+    spectrum::Spectrum)
+
+    return propagate_photons([source], target, medium, spectrum)
+end
 
 
 function propagate_photons(

@@ -282,7 +282,7 @@ rnd_sources = collect(
 )
 
 
-n_sim = 25
+n_sim = 100
 
 results_bio_1pmt = vcat(
     [run_sim(target_1pmt, sources, trange) for sources in bio_sources[1:n_sim]]...
@@ -311,7 +311,7 @@ mean_hit_rate_1pmt_rnd = combine(groupby(results_rnd_1pmt, :ds_rate), :hit_rate 
 
 scale_factor = mean_hit_rate_1pmt_bio[1, :hit_rate_mean] / mean_hit_rate_1pmt_rnd[1, :hit_rate_mean]
 
-n_sim = 5
+n_sim = 100
 
 results_bio = vcat(
     [run_sim(target, sources, trange) for sources in bio_sources[1:n_sim]]...
@@ -328,6 +328,12 @@ end
 
 function make_all_coinc_rate_plot(res...)
 
+    theme = Theme(
+        palette=(color = Makie.wong_colors(), linestyle = [:solid, :dash]),
+        Lines = (cycle = Cycle([:color, :linestyle], covary=true),)       
+    )
+
+    set_theme!(theme)
     f = Figure()
     ax = Axis(f[1, 1],
         title = "",
@@ -342,17 +348,21 @@ function make_all_coinc_rate_plot(res...)
 
     )
 
-    ylims!(ax, (1, 1E7))
+    ylims!(ax, (0.1, 1E7))
     xlims!(ax, (1E4, 1E6))
 
+    lc_range = 2:6
 
-    for (ls, (result_df, mean_hit_rate_1pmt)) in zip([:solid, :dashed], res)
+    for (j, (result_df, mean_hit_rate_1pmt)) in enumerate(res)
         grpd_tw = groupby(groupby(result_df, :time_window)[3], :ds_rate)
-        coinc_trigger = combine(grpd_tw, :coincs_trigger => count_lc_levels => AsTable)
+        #coinc_trigger = combine(grpd_tw, :coincs_trigger => count_lc_levels => AsTable)
+        coinc_trigger = combine(grpd_tw, :coincs_fixed_w => count_lc_levels => AsTable)
+        
+        
         coinc_trigger = innerjoin(coinc_trigger, mean_hit_rate_1pmt, on=:ds_rate)
 
 
-        for (i, lc_level) in enumerate(2:5)
+        for (i, lc_level) in enumerate(lc_range)
             col_sym = Symbol(format("x{:d}", i))
 
             lines!(
@@ -360,15 +370,28 @@ function make_all_coinc_rate_plot(res...)
                 coinc_trigger[:, :hit_rate_mean],
                 coinc_trigger[:, col_sym] .* (1E9 / (trange * n_sim)),
                 label=string(lc_level ),
-                linestyle=ls
+                linestyle=Cycled(j),
+                color=Cycled(i)
                 )
 
         end
     end
 
-    f[1, 2] = Legend(f, ax, "LC Level", framevisible = false)
+    group_color = [
+        LineElement(linestyle=:solid, color = col) for col in Makie.wong_colors()[1:length(lc_range)]
+        ]
 
-    f
+    group_linestyle = [LineElement(linestyle=ls, color = :black) for ls in [:solid, :dash]]
+
+    legend = Legend(
+        f,
+        [group_color, group_linestyle],
+        [string.(lc_range), ["Bio", "Random"]],
+        ["LC Level", "Em. Pos."])
+
+    f[1, 2] = legend
+    set_theme!(theme)
+    return f
 end
 
 
@@ -379,7 +402,6 @@ make_all_coinc_rate_plot(
 
 
 
-f = Figure()
 
 ax = Axis(f[1, 1])
 

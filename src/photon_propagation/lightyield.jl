@@ -462,10 +462,11 @@ end
 function ExtendedCherenkovEmitter(
     particle::Particle,
     medium::MediumProperties,
-    wl_range::Tuple{T, T},
+    wl_range::Tuple{T, T};
+    oversample=1.
     ) where {T<:Real}
     long_param = LongitudinalParameterisation(particle.energy, medium, particle.type)
-    photons = pois_rand(total_lightyield(particle, medium, wl_range))
+    photons = pois_rand(total_lightyield(particle, medium, wl_range)*oversample)
 
     ExtendedCherenkovEmitter(particle.position, particle.direction, particle.time, photons, long_param)
 end

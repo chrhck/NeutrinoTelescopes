@@ -94,7 +94,7 @@ function resample_simulation(hit_times, total_weights, downsample=1.)
 end
 
 
-function resample_simulation(df::AbstractDataFrame, downsample=1., per_pmt=true)
+function resample_simulation(df::AbstractDataFrame; downsample=1., per_pmt=true)
 
 
     wrapped(hit_times, total_weights) = resample_simulation(hit_times, total_weights, downsample)
