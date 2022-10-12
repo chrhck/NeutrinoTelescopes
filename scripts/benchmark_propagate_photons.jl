@@ -8,24 +8,27 @@ using CUDA
 #debuglogger = ConsoleLogger(stderr, Logging.Debug)
 #global_logger(debuglogger)
 
+
 distance = 80f0
-medium = make_cascadia_medium_properties(Float32)
-source = PointlikeIsotropicEmitter(SA[0f0, 0f0, 0f0], 0f0, Int64(1E8), CherenkovSpectrum((300f0, 800f0), 50, medium))
+medium = make_cascadia_medium_properties(0.99f0)
+source = PointlikeIsotropicEmitter(SA[0f0, 0f0, 0f0], 0f0, Int64(1E8))
 n_pmts=16
 pmt_area=Float32((75e-3 / 2)^2*π)
 target_radius = 0.21f0
 
 suite = BenchmarkGroup()
-n_photons = exp10.(5:0.5:10)
+n_photons = exp10.(5:0.5:11)
 target = DetectionSphere(@SVector[0.0f0, 0.0f0, distance], target_radius, n_pmts, pmt_area)
 
+spectrum = CherenkovSpectrum((300f0, 800f0), 30, medium)
+
 for nph in n_photons
-    source = PointlikeIsotropicEmitter(SA[0f0, 0f0, 0f0], 0f0, Int64(ceil(nph)), CherenkovSpectrum((300f0, 800f0), 50, medium))
-    suite[nph] = @CUDA.sync @benchmarkable $PhotonPropagationCuda.propagate_photons($source, $target, $medium)
+    source = PointlikeIsotropicEmitter(SA[0f0, 0f0, 0f0], 0f0, Int64(ceil(nph)))
+    suite[nph] = @CUDA.sync @benchmarkable $propagate_photons($source, $target, $medium, $spectrum)
 end
 
 tune!(suite)
-results = run(suite, seconds=10)
+results = run(suite, seconds=20)
 
 plot(results)
 
@@ -34,11 +37,11 @@ medr = median(results)
 p = scatter(collect(keys(medr)), getproperty.(values(medr), (:time, )) ./ (keys(medr)),
  xscale=:log10, yscale=:log10, ylim=(1E-1, 1E5),
  xlabel="Number of Photons", ylabel="Time per Photon (ns)",
- label="", dpi=150)
+ label="", dpi=150, title=CUDA.name(CUDA.device()))
 
 savefig(p, joinpath(@__DIR__, "../figures/photon_benchmark.png"),)
 
-
+#=
 log_energies = 2:0.5:5.5
 
 suite = BenchmarkGroup()
@@ -78,3 +81,4 @@ medr = median(results)
 
 scatter(collect(keys(medr)), getproperty.(values(medr), (:time, )) ./ (keys(medr)),
  xscale=:log10, yscale=:log10, ylim=(1E-1, 1E5))
+=#

@@ -13,6 +13,7 @@ using LinearAlgebra
 using HDF5
 using TerminalLoggers
 using Logging: global_logger
+using Sobol
 
 medium = make_cascadia_medium_properties(0.99f0)
 pmt_area=Float32((75e-3 / 2)^2*π)
@@ -37,19 +38,26 @@ Base.@kwdef struct PhotonTable{T}
     pos_phi::Float64
 end
 
+n_sims = 100
 
-log_energy_dist = Uniform(2, 6)
-log_distance_dist = Uniform(0, log10(300))
-
+sobol = skip(
+    SobolSeq(
+        [2, log10(5), -1, 0],
+        [6, log10(300), 1, 2*π]),
+    n_sims)
 
 results = Vector{PhotonTable{DataFrame}}()
 
 global_logger(TerminalLogger(right_justify=120))
 
-@progress "Photon sims" for i in 1:50
+@progress "Photon sims" for i in 1:n_sims
 
-    distance = Float32(10^rand(log_distance_dist))
-    energy = 10^rand(log_energy_dist)
+    pars = next!(sobol_dist_energy)
+    distance = Float32(10^pars[1])
+    energy = 10^pars[2]
+    dir_costheta = pars[3]
+    dir_phi = pars[4]
+
     target = MultiPMTDetector(
         @SVector[0f0, 0f0, 0f0],
         target_radius,
@@ -57,9 +65,6 @@ global_logger(TerminalLogger(right_justify=120))
         make_pom_pmt_coordinates(Float32)
     )
 
-
-    dir_costheta = rand(Uniform(-1, 1))
-    dir_phi = rand(Uniform(0, 2*π))
     direction::SVector{3, Float32} = sph_to_cart(acos(dir_costheta), dir_phi)
 
     ppos =  @SVector[0.0f0, 0f0, distance]

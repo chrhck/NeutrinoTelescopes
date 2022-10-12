@@ -426,12 +426,6 @@ struct PointlikeIsotropicEmitter{T} <: PhotonSource{T}
 end
 
 
-
-
-function PointlikeIsotropicEmitter(position::SVector{3, T}, time::T, photons::Int64) where {T<:Real}
-    PointlikeIsotropicEmitter(position, time, photons)
-end
-
 JSON.lower(e::PointlikeIsotropicEmitter) = Dict(
     "position" => e.position,
     "time" => e.time,
