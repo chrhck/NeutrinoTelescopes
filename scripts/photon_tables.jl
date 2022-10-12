@@ -14,6 +14,17 @@ using HDF5
 using TerminalLoggers
 using Logging: global_logger
 using Sobol
+using ArgParse
+
+s = ArgParseSettings()
+@add_arg_table s begin
+    "--n_sims"
+        help = "Number of simulations"
+        arg_type = Int
+        required = true
+end
+parsed_args = parse_args(ARGS, s)
+
 
 medium = make_cascadia_medium_properties(0.99f0)
 pmt_area=Float32((75e-3 / 2)^2*π)
@@ -38,7 +49,7 @@ Base.@kwdef struct PhotonTable{T}
     pos_phi::Float64
 end
 
-n_sims = 100
+n_sims = parsed_args["n_sims"]
 
 sobol = skip(
     SobolSeq(
