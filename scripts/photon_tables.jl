@@ -12,7 +12,7 @@ using Rotations
 using LinearAlgebra
 using HDF5
 using TerminalLoggers
-
+using Logging: global_logger
 
 medium = make_cascadia_medium_properties(0.99f0)
 pmt_area=Float32((75e-3 / 2)^2*π)
