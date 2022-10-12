@@ -11,7 +11,6 @@ using CUDA
 
 distance = 80f0
 medium = make_cascadia_medium_properties(0.99f0)
-source = PointlikeIsotropicEmitter(SA[0f0, 0f0, 0f0], 0f0, Int64(1E8))
 n_pmts=16
 pmt_area=Float32((75e-3 / 2)^2*π)
 target_radius = 0.21f0
