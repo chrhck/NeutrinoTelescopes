@@ -11,6 +11,7 @@ using CairoMakie
 using Rotations
 using LinearAlgebra
 using HDF5
+using TerminalLoggers
 
 
 medium = make_cascadia_medium_properties(0.99f0)
@@ -42,6 +43,8 @@ log_distance_dist = Uniform(0, log10(300))
 
 
 results = Vector{PhotonTable{DataFrame}}()
+
+global_logger(TerminalLogger(right_justify=120))
 
 @progress "Photon sims" for i in 1:50
 
@@ -91,19 +94,19 @@ results = Vector{PhotonTable{DataFrame}}()
         end
 
         hits = resample_simulation(hits)
-        
+
         #=
         Rotating the module (active rotation) is equivalent to rotating the coordinate system
         (passive rotation). Hence rotate the position and the direction of the light source with the
         inverse rotation matrix to obtain a description in which the module axis is again aligned with ez
         =#
-        direction_rot = orientation' * direction 
+        direction_rot = orientation' * direction
         position_rot = orientation' * ppos
 
         position_rot_normed = position_rot ./ norm(position_rot)
         dir_theta, dir_phi = cart_to_sph(direction_rot)
         pos_theta, pos_phi = cart_to_sph(position_rot_normed)
-        
+
         push!(
             results,
             PhotonTable(
@@ -118,7 +121,7 @@ results = Vector{PhotonTable{DataFrame}}()
 
 
     end
-   
+
 end
 
 
@@ -136,7 +139,7 @@ function save_photon_tables(fname, res::AbstractVector{<:PhotonTable})
                 end
                 HDF5.attributes(g[ds_name])[String(name)] = getfield(tab, name)
             end
-        
+
         end
     end
 end
