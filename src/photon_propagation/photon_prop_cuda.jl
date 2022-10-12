@@ -662,7 +662,7 @@ end
 
 
 
-function process_output(output::AbstractVector{T}, stack_pointers::AbstractVector{U}) where {T,U<:Integer,N}
+function process_output(output::AbstractVector{T}, stack_pointers::AbstractVector{<:Integer}) where {T}
 
     output = Vector(output)
 

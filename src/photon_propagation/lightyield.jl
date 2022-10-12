@@ -444,7 +444,7 @@ struct PointlikeTimeRangeEmitter{T, U} <: PhotonSource{T}
     photons::Int64
 end
 
-JSON.lower(e::PointlikeIsotropicEmitter) = Dict(
+JSON.lower(e::PointlikeTimeRangeEmitter) = Dict(
     "position" => e.position,
     "time_range" => e.time_range,
     "photons" => e.photons,
