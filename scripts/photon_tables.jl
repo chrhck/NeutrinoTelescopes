@@ -148,12 +148,12 @@ global_logger(TerminalLogger(right_justify=120))
 end
 
 
-function save_photon_tables(fname, res::AbstractVector{<:PhotonTable})
+function save_photon_tables(fname, res::AbstractVector{<:PhotonTable}; n_skip=n_skip)
     h5open(fname, "w") do fid
         g = create_group(fid, "photon_tables")
 
         for (i, tab) in enumerate(res)
-            ds_name = format("dataset_{:d}", i)
+            ds_name = format("dataset_{:d}", i+n_skip)
             g[ds_name] = Matrix(tab.hits)
 
             for name in fieldnames(eltype(res))
@@ -167,4 +167,4 @@ function save_photon_tables(fname, res::AbstractVector{<:PhotonTable})
     end
 end
 
-save_photon_tables(joinpath(outdir, "photon_table.hd5"), results)
+save_photon_tables(joinpath(outdir, "photon_table.hd5"), results; n_skip=n_skip)
