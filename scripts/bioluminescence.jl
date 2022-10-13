@@ -246,31 +246,7 @@ function count_lc_levels(a)
 end
 
 
-function make_all_coinc_rate_plot(n_sim, res...)
-
-    theme = Theme(
-        palette=(color = Makie.wong_colors(), linestyle = [:solid, :dash, :dot]),
-        Lines = (cycle = Cycle([:color, :linestyle], covary=true),)       
-    )
-
-    set_theme!(theme)
-    f = Figure()
-    ax = Axis(f[1, 1],
-        title = "",
-        xlabel = "Single PMT Rate",
-        ylabel = "LC Rate",
-        yscale = log10,
-        xscale = log10,
-        yminorticks = IntervalsBetween(8),
-        yminorticksvisible = true,
-        yminorgridvisible = true,
-
-
-    )
-
-    ylims!(ax, (0.1, 1E7))
-    xlims!(ax, (1E4, 1E7))
-
+function make_all_coinc_rate_plot(ax, n_sim, res...)
     lc_range = 2:6
 
     for (j, result_df) in enumerate(res)
@@ -296,21 +272,6 @@ function make_all_coinc_rate_plot(n_sim, res...)
         end
     end
 
-    group_color = [
-        LineElement(linestyle=:solid, color = col) for col in Makie.wong_colors()[1:length(lc_range)]
-        ]
-
-    group_linestyle = [LineElement(linestyle=ls, color = :black) for ls in [:solid, :dash, :dot]]
-
-    legend = Legend(
-        f,
-        [group_color, group_linestyle],
-        [string.(lc_range), ["Bio Mock", "Bio FD", "Random"]],
-        ["LC Level", "Em. Pos."])
-
-    f[1, 2] = legend
-    set_theme!(theme)
-    return f
 end
 
 
@@ -347,14 +308,11 @@ end
 
 
 
-n_sources = 10
-n_sim = 50
-
+n_sim = 100
 all_res = []
-
 for n_sources in [5, 10, 30, 50, 80, 100]
 
-    n_ph = Int64(ceil((1E8 /  n_sources)))
+    n_ph = Int64(ceil((1E9 /  n_sources)))
 
     Random.seed!(31338)
     bio_sources = [make_biolumi_sources(n_sources, n_ph, trange) for _ in 1:n_sim]
@@ -378,7 +336,59 @@ for n_sources in [5, 10, 30, 50, 80, 100]
 
     push!(all_res, (n_src=n_sources, bio=results_bio, bio_df=results_bio_fd, rng=results_rnd))
 end
-make_all_coinc_rate_plot(n_sim, results_bio, results_bio_fd, results_rnd)
+
+
+theme = Theme(
+        palette=(color = Makie.wong_colors(), linestyle = [:solid, :dash, :dot]),
+        Lines = (cycle = Cycle([:color, :linestyle], covary=true),)       
+    )
+
+set_theme!(theme)
+
+f = Figure()
+grid = GridLayout()
+
+for (i, res) in enumerate(all_res)
+
+    row, col = divrem(i-1, 2)
+    @show i, row, col
+
+    ax = Axis(f,
+    title = format("{:d} sources", res[:n_src]),
+    xlabel = "Single PMT Rate",
+    ylabel = "LC Rate",
+    yscale = log10,
+    xscale = log10,
+    yminorticks = IntervalsBetween(8),
+    yminorticksvisible = true,
+    yminorgridvisible = true,
+    )
+
+    ylims!(ax, (0.1, 1E7))
+    xlims!(ax, (1E4, 5E6))
+
+    make_all_coinc_rate_plot(ax, n_sim, res[:bio], res[:bio_df], res[:rng])
+
+    grid[row+1, col+1] = ax
+end
+lc_range = 2:6
+f.layout[1, 1] = grid
+group_color = [
+    LineElement(linestyle=:solid, color = col) for col in Makie.wong_colors()[1:length(lc_range)]
+    ]
+
+group_linestyle = [LineElement(linestyle=ls, color = :black) for ls in [:solid, :dash, :dot]]
+
+legend = Legend(
+    f,
+    [group_color, group_linestyle],
+    [string.(lc_range), ["Bio Mock", "Bio FD", "Random"]],
+    ["LC Level", "Em. Pos."])
+
+f[1, 2] = legend
+f
+
+
 
 
 #=
