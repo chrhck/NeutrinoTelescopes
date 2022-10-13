@@ -16,12 +16,18 @@ using Logging: global_logger
 using Sobol
 using ArgParse
 
+
 s = ArgParseSettings()
 @add_arg_table s begin
     "--n_sims"
         help = "Number of simulations"
         arg_type = Int
         required = true
+    "--n_skip"
+        help = "Skip in Sobol sequence"
+        arg_type = Int
+        required = false
+        default = 0
 end
 parsed_args = parse_args(ARGS, s)
 
@@ -50,12 +56,13 @@ Base.@kwdef struct PhotonTable{T}
 end
 
 n_sims = parsed_args["n_sims"]
+n_skip = parsed_args["n_skip"]
 
 sobol = skip(
     SobolSeq(
         [2, log10(5), -1, 0],
         [6, log10(300), 1, 2*π]),
-    n_sims)
+    n_sims+n_skip)
 
 results = Vector{PhotonTable{DataFrame}}()
 
