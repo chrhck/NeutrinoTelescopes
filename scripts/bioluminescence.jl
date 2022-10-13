@@ -17,6 +17,11 @@ using Base.Iterators
 
 
 function make_biolumi_sources_from_positions(positions, n_ph, trange)
+
+    positions =  SVector{3, Float32}.(positions)
+    mask = norm.(positions) .> 0.3
+    positions = positions[mask]
+
     sources = Vector{PointlikeTimeRangeEmitter}(undef, length(positions))
 
     for (i, pos) in enumerate(positions)
@@ -192,7 +197,7 @@ function run_sim(
     all_hits = sim_biolumi(target, sources)
     all_hits_1pmt = sim_biolumi(target_1pmt, sources)
 
-    downsampling = 10 .^(0:0.1:2)
+    downsampling = 10 .^(0:0.1:3)
 
     results = []
 
@@ -264,7 +269,7 @@ function make_all_coinc_rate_plot(n_sim, res...)
     )
 
     ylims!(ax, (0.1, 1E7))
-    xlims!(ax, (1E4, 1E6))
+    xlims!(ax, (1E4, 1E7))
 
     lc_range = 2:6
 
@@ -323,7 +328,7 @@ target_1pmt = MultiPMTDetector(
     @SVector[0.0f0, 0f0,  0.0f0],
     target_radius,
     pmt_area,
-    pmt_coord
+    make_pom_pmt_coordinates(Float32)
 )
 
 
@@ -345,28 +350,34 @@ end
 n_sources = 10
 n_sim = 50
 
+all_res = []
 
-n_ph = Int64(ceil((1E7 /  n_sources * 100)))
+for n_sources in [5, 10, 30, 50, 80, 100]
 
-Random.seed!(31338)
-bio_sources = [make_biolumi_sources(n_sources, n_ph, trange) for _ in 1:n_sim]
-rnd_sources = [make_random_sources(n_sources, n_ph*10, trange, 5) for _ in 1:n_sim]
+    n_ph = Int64(ceil((1E8 /  n_sources)))
+
+    Random.seed!(31338)
+    bio_sources = [make_biolumi_sources(n_sources, n_ph, trange) for _ in 1:n_sim]
+    rnd_sources = [make_random_sources(n_sources, n_ph*7, trange, 5) for _ in 1:n_sim]
 
 
-bio_pos_df = Vector{Float64}.(JSON.parsefile(joinpath(@__DIR__, "../assets/relative_emission_positions.json")))
-bio_sources_fd = [sample(make_biolumi_sources_from_positions(bio_pos_df, n_ph, trange), n_sources, replace=false)  for _ in 1:n_sim]
+    bio_pos_df = Vector{Float64}.(JSON.parsefile(joinpath(@__DIR__, "../assets/relative_emission_positions.json")))
+    bio_sources_fd = [sample(make_biolumi_sources_from_positions(bio_pos_df, n_ph*3, trange), n_sources, replace=false)  for _ in 1:n_sim]
 
-results_bio = vcat(
-    [run_sim(target, target_1pmt, sources, trange) for sources in bio_sources[1:n_sim]]...
-)
+    results_bio = vcat(
+        [run_sim(target, target_1pmt, sources, trange) for sources in bio_sources[1:n_sim]]...
+    )
 
-results_bio_fd = vcat(
-[run_sim(target, target_1pmt, sources, trange) for sources in bio_sources_fd[1:n_sim]]...
-)
+    results_bio_fd = vcat(
+    [run_sim(target, target_1pmt, sources, trange) for sources in bio_sources_fd[1:n_sim]]...
+    )
 
-results_rnd = vcat(
-    [run_sim(target, target_1pmt, sources, trange) for sources in rnd_sources[1:n_sim]]...
-)
+    results_rnd = vcat(
+        [run_sim(target, target_1pmt, sources, trange) for sources in rnd_sources[1:n_sim]]...
+    )
+
+    push!(all_res, (n_src=n_sources, bio=results_bio, bio_df=results_bio_fd, rng=results_rnd))
+end
 make_all_coinc_rate_plot(n_sim, results_bio, results_bio_fd, results_rnd)
 
 
