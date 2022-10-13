@@ -154,7 +154,7 @@ function save_photon_tables(fname, res::AbstractVector{<:PhotonTable})
         fid = h5open(fname, "r+")
         ds_offset = length(fid["photon_tables"])
         g = fid["photon_tables"]
-        println(format("Found {d} datasets", ds_offset))
+        println(format("Found {:d} datasets", ds_offset))
     else
         fid = h5open(fname, "w")
         ds_offset = 0
