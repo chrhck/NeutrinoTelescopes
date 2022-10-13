@@ -71,8 +71,8 @@ global_logger(TerminalLogger(right_justify=120))
 @progress "Photon sims" for i in 1:n_sims
 
     pars = next!(sobol)
-    distance = Float32(10^pars[1])
-    energy = 10^pars[2]
+    energy = 10^pars[1]
+    distance = Float32(10^pars[2])
     dir_costheta = pars[3]
     dir_phi = pars[4]
 
