@@ -152,7 +152,7 @@ function save_photon_tables(fname, res::AbstractVector{<:PhotonTable})
 
     if isfile(fname)
         ds_ofset = h5open(fname, "w") do fid
-            length(fig["photon_tables"])
+            length(fid["photon_tables"])
         end
         mode = "a"
     else
