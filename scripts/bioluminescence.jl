@@ -200,13 +200,13 @@ function run_sim(
 
         if ds ≈ 1
             hits = all_hits
-            hits_1pmt = all_hits
+            hits_1pmt = all_hits_1pmt
         else
             n_sel = Int64(ceil(nrow(all_hits) / ds))
             hits = all_hits[shuffle(1:nrow(all_hits))[1:n_sel], :]
 
             n_sel = Int64(ceil(nrow(all_hits_1pmt) / ds))
-            hits_1pmt = all_hits[shuffle(1:nrow(all_hits_1pmt))[1:n_sel], :]
+            hits_1pmt = all_hits_1pmt[shuffle(1:nrow(all_hits_1pmt))[1:n_sel], :]
         end
 
         rate = nrow(hits) / trange * 1E9 # Rate in Hz
@@ -234,6 +234,80 @@ function run_sim(
 
     return DataFrame(results)
 end
+
+
+function count_lc_levels(a)
+    return [counts(vcat(a...), 2:10)]
+end
+
+
+function make_all_coinc_rate_plot(n_sim, res...)
+
+    theme = Theme(
+        palette=(color = Makie.wong_colors(), linestyle = [:solid, :dash, :dot]),
+        Lines = (cycle = Cycle([:color, :linestyle], covary=true),)       
+    )
+
+    set_theme!(theme)
+    f = Figure()
+    ax = Axis(f[1, 1],
+        title = "",
+        xlabel = "Single PMT Rate",
+        ylabel = "LC Rate",
+        yscale = log10,
+        xscale = log10,
+        yminorticks = IntervalsBetween(8),
+        yminorticksvisible = true,
+        yminorgridvisible = true,
+
+
+    )
+
+    ylims!(ax, (0.1, 1E7))
+    xlims!(ax, (1E4, 1E6))
+
+    lc_range = 2:6
+
+    for (j, result_df) in enumerate(res)
+        grpd_tw = groupby(groupby(result_df, :time_window)[3], :ds_rate)
+        coinc_trigger = combine(grpd_tw, :coincs_trigger => count_lc_levels => AsTable)
+        #coinc_trigger = combine(grpd_tw, :coincs_fixed_w => count_lc_levels => AsTable)
+        mean_hit_rate_1pmt = combine(groupby(result_df, :ds_rate), :hit_rate_1pmt => mean => :hit_rate_mean)
+        coinc_trigger = innerjoin(coinc_trigger, mean_hit_rate_1pmt, on=:ds_rate)
+
+
+        for (i, lc_level) in enumerate(lc_range)
+            col_sym = Symbol(format("x{:d}", i))
+
+            lines!(
+                ax,
+                coinc_trigger[:, :hit_rate_mean],
+                coinc_trigger[:, col_sym] .* (1E9 / (trange * n_sim)),
+                label=string(lc_level ),
+                linestyle=Cycled(j),
+                color=Cycled(i)
+                )
+
+        end
+    end
+
+    group_color = [
+        LineElement(linestyle=:solid, color = col) for col in Makie.wong_colors()[1:length(lc_range)]
+        ]
+
+    group_linestyle = [LineElement(linestyle=ls, color = :black) for ls in [:solid, :dash, :dot]]
+
+    legend = Legend(
+        f,
+        [group_color, group_linestyle],
+        [string.(lc_range), ["Bio Mock", "Bio FD", "Random"]],
+        ["LC Level", "Em. Pos."])
+
+    f[1, 2] = legend
+    set_theme!(theme)
+    return f
+end
+
 
 
 
@@ -266,20 +340,35 @@ function read_sources(path, trange, nph)
     bio_sources
 end
 
-n_sources = 20
+
+
+n_sources = 10
 n_sim = 50
 
-Random.seed!(31338)
-bio_sources = [make_biolumi_sources(n_sources, Int64(1E7), trange) for _ in 1:n_sim]
 
-nph_rnd = Int64(ceil(4.035E7))
-rnd_sources = [make_random_sources(n_sources, nph_rnd, trange, 5) for _ in 1:n_sim]
+n_ph = Int64(ceil((1E7 /  n_sources * 100)))
+
+Random.seed!(31338)
+bio_sources = [make_biolumi_sources(n_sources, n_ph, trange) for _ in 1:n_sim]
+rnd_sources = [make_random_sources(n_sources, n_ph*10, trange, 5) for _ in 1:n_sim]
 
 
 bio_pos_df = Vector{Float64}.(JSON.parsefile(joinpath(@__DIR__, "../assets/relative_emission_positions.json")))
-bio_sources_fd = [sample(make_biolumi_sources_from_positions(bio_pos_df, Int64(1E7), trange), n_sources, replace=false)  for _ in 1:n_sim]
+bio_sources_fd = [sample(make_biolumi_sources_from_positions(bio_pos_df, n_ph, trange), n_sources, replace=false)  for _ in 1:n_sim]
 
-bio_sources_fd[1][1]
+results_bio = vcat(
+    [run_sim(target, target_1pmt, sources, trange) for sources in bio_sources[1:n_sim]]...
+)
+
+results_bio_fd = vcat(
+[run_sim(target, target_1pmt, sources, trange) for sources in bio_sources_fd[1:n_sim]]...
+)
+
+results_rnd = vcat(
+    [run_sim(target, target_1pmt, sources, trange) for sources in rnd_sources[1:n_sim]]...
+)
+make_all_coinc_rate_plot(n_sim, results_bio, results_bio_fd, results_rnd)
+
 
 #=
 write_parquet(joinpath(@__DIR__, "../assets/bio_sources.parquet"),
@@ -314,17 +403,34 @@ bio_sources_fd = collect(
 
 
 
-results_bio = vcat(
-    [run_sim(target, target_1pmt, sources, trange) for sources in bio_sources[1:n_sim]]...
+
+
+grpd_tw = groupby(groupby(results_bio, :time_window)[3], :ds_rate)
+coinc_trigger = combine(grpd_tw, :coincs_trigger => count_lc_levels => AsTable)
+mean_hit_rate_1pmt = combine(groupby(results_bio, :ds_rate), :hit_rate_1pmt => mean)
+coinc_trigger = innerjoin(coinc_trigger, mean_hit_rate_1pmt, on=:ds_rate)
+
+
+rates_bio = groupby(results_bio, :ds_rate)[(1.0, )][:, :hit_rate_1pmt]
+rates_rnd = groupby(results_rnd, :ds_rate)[(1.0, )][:, :hit_rate_1pmt]
+rates_bio_fd = groupby(results_bio_fd, :ds_rate)[(1.0, )][:, :hit_rate_1pmt]
+f = Figure()
+ax = Axis(f[1, 1],
+    title = "Single PMT-Rates",
+    xlabel = "Log10(Rate)",
+    ylabel = "Count"
 )
 
-results_bio_fd = vcat(
-[run_sim(target, target_1pmt, sources, trange) for sources in bio_sources_fd[1:n_sim]]...
-)
+hist!(ax, log10.(rates_bio_fd), label="Bio FD")
+hist!(ax, log10.(rates_bio), label="Bio")
+hist!(ax, log10.(rates_rnd), label="Random")
+axislegend(ax)
+f
 
-results_rnd = vcat(
-    [run_sim(target, target_1pmt, sources, trange) for sources in rnd_sources[1:n_sim]]...
-)
+
+
+
+
 
 
 
@@ -338,21 +444,6 @@ results_bio_fd_1pmt = vcat(
     [run_sim(target_1pmt, sources, trange) for sources in bio_sources_fd[1:n_sim]]...
     )
 
-rates_bio = groupby(results_bio_1pmt, :ds_rate)[(1.0, )][:, :hit_rate]
-rates_rnd = groupby(results_rnd_1pmt, :ds_rate)[(1.0, )][:, :hit_rate]
-rates_bio_fd = groupby(results_bio_fd_1pmt, :ds_rate)[(1.0, )][:, :hit_rate]
-f = Figure()
-ax = Axis(f[1, 1],
-    title = "Single PMT-Rates",
-    xlabel = "Log10(Rate)",
-    ylabel = "Count"
-)
-
-hist!(ax, log10.(rates_bio_fd), label="Bio FD")
-hist!(ax, log10.(rates_bio), label="Bio")
-hist!(ax, log10.(rates_rnd), label="Random")
-axislegend(ax)
-f
 
 mean_hit_rate_1pmt_bio = combine(groupby(results_bio_1pmt, :ds_rate), :hit_rate => mean)
 mean_hit_rate_1pmt_rnd = combine(groupby(results_rnd_1pmt, :ds_rate), :hit_rate => mean)
@@ -376,78 +467,6 @@ results_rnd = vcat(
     )
 
 
-function count_lc_levels(a)
-    return [counts(vcat(a...), 2:10)]
-end
-
-
-function make_all_coinc_rate_plot(res...)
-
-    theme = Theme(
-        palette=(color = Makie.wong_colors(), linestyle = [:solid, :dash, :dot]),
-        Lines = (cycle = Cycle([:color, :linestyle], covary=true),)       
-    )
-
-    set_theme!(theme)
-    f = Figure()
-    ax = Axis(f[1, 1],
-        title = "",
-        xlabel = "Single PMT Rate",
-        ylabel = "LC Rate",
-        yscale = log10,
-        xscale = log10,
-        yminorticks = IntervalsBetween(8),
-        yminorticksvisible = true,
-        yminorgridvisible = true,
-
-
-    )
-
-    ylims!(ax, (0.1, 1E7))
-    xlims!(ax, (1E4, 1E6))
-
-    lc_range = 2:6
-
-    for (j, (result_df, mean_hit_rate_1pmt)) in enumerate(res)
-        grpd_tw = groupby(groupby(result_df, :time_window)[3], :ds_rate)
-        coinc_trigger = combine(grpd_tw, :coincs_trigger => count_lc_levels => AsTable)
-        #coinc_trigger = combine(grpd_tw, :coincs_fixed_w => count_lc_levels => AsTable)
-        
-        
-        coinc_trigger = innerjoin(coinc_trigger, mean_hit_rate_1pmt, on=:ds_rate)
-
-
-        for (i, lc_level) in enumerate(lc_range)
-            col_sym = Symbol(format("x{:d}", i))
-
-            lines!(
-                ax,
-                coinc_trigger[:, :hit_rate_mean],
-                coinc_trigger[:, col_sym] .* (1E9 / (trange * n_sim)),
-                label=string(lc_level ),
-                linestyle=Cycled(j),
-                color=Cycled(i)
-                )
-
-        end
-    end
-
-    group_color = [
-        LineElement(linestyle=:solid, color = col) for col in Makie.wong_colors()[1:length(lc_range)]
-        ]
-
-    group_linestyle = [LineElement(linestyle=ls, color = :black) for ls in [:solid, :dash, :dot]]
-
-    legend = Legend(
-        f,
-        [group_color, group_linestyle],
-        [string.(lc_range), ["Bio", "Bio FD", "Random"]],
-        ["LC Level", "Em. Pos."])
-
-    f[1, 2] = legend
-    set_theme!(theme)
-    return f
-end
 
 
 
