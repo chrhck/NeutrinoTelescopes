@@ -151,31 +151,29 @@ end
 function save_photon_tables(fname, res::AbstractVector{<:PhotonTable})
 
     if isfile(fname)
-        ds_ofset = h5open(fname, "r") do fid
-            length(fid["photon_tables"])
-        end
-        mode = "r+"
+        fid = h5open(fname, "r+")
+        ds_offset = length(fid["photon_tables"])
+        g = fid["photon_tables"]
     else
-        ds_ofset = 0
-        mode = "w"
+        fid = h5open(fname, "w")
+        ds_offset = 0
+        g = create_group(fid, "photon_tables")
     end
        
-    h5open(fname, mode) do fid
-        g = create_group(fid, "photon_tables")
+    for (i, tab) in enumerate(res)
+        ds_name = format("dataset_{:d}", i+ds_offset)
+        g[ds_name] = Matrix(tab.hits)
 
-        for (i, tab) in enumerate(res)
-            ds_name = format("dataset_{:d}", i+n_skip)
-            g[ds_name] = Matrix(tab.hits)
-
-            for name in fieldnames(eltype(res))
-                if name == :hits
-                    continue
-                end
-                HDF5.attributes(g[ds_name])[String(name)] = getfield(tab, name)
+        for name in fieldnames(eltype(res))
+            if name == :hits
+                continue
             end
-
+            HDF5.attributes(g[ds_name])[String(name)] = getfield(tab, name)
         end
+
     end
+
+    close(fid)
 end
 
 save_photon_tables(joinpath(outdir, "photon_table.hd5"), results)
