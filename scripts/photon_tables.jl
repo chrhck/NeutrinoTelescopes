@@ -154,7 +154,7 @@ function save_photon_tables(fname, res::AbstractVector{<:PhotonTable})
         ds_ofset = h5open(fname, "r") do fid
             length(fid["photon_tables"])
         end
-        mode = "a"
+        mode = "r+"
     else
         ds_ofset = 0
         mode = "w"
