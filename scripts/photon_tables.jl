@@ -118,6 +118,10 @@ global_logger(TerminalLogger(right_justify=120))
 
         hits = resample_simulation(hits)
 
+        @show nrow(hits)
+        @show energy, distance, dir_costheta, dir_phi
+
+
         #=
         Rotating the module (active rotation) is equivalent to rotating the coordinate system
         (passive rotation). Hence rotate the position and the direction of the light source with the
