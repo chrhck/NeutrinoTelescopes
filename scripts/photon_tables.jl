@@ -16,7 +16,7 @@ using Logging: global_logger
 using Sobol
 using ArgParse
 
-#=
+
 s = ArgParseSettings()
 @add_arg_table s begin
     "--n_sims"
@@ -30,10 +30,10 @@ s = ArgParseSettings()
         default = 0
 end
 parsed_args = parse_args(ARGS, s)
-=#
 
+#=
 parsed_args = Dict("n_sims"=>1, "n_skip"=>0)
-
+=#
 medium = make_cascadia_medium_properties(0.99f0)
 pmt_area=Float32((75e-3 / 2)^2*π)
 target_radius = 0.21f0
