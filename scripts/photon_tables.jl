@@ -16,7 +16,7 @@ using Logging: global_logger
 using Sobol
 using ArgParse
 
-
+#=
 s = ArgParseSettings()
 @add_arg_table s begin
     "--n_sims"
@@ -30,7 +30,9 @@ s = ArgParseSettings()
         default = 0
 end
 parsed_args = parse_args(ARGS, s)
+=#
 
+parsed_args = Dict("n_sims"=>1, "n_skip"=>0)
 
 medium = make_cascadia_medium_properties(0.99f0)
 pmt_area=Float32((75e-3 / 2)^2*π)
@@ -118,8 +120,9 @@ global_logger(TerminalLogger(right_justify=120))
 
         hits = resample_simulation(hits)
 
-        @show nrow(hits)
-        @show energy, distance, dir_costheta, dir_phi
+        if nrow(hits) == 0
+            continue
+        end
 
 
         #=
@@ -163,7 +166,7 @@ function save_photon_tables(fname, res::AbstractVector{<:PhotonTable})
         ds_offset = 0
         g = create_group(fid, "photon_tables")
     end
-       
+
     for (i, tab) in enumerate(res)
         ds_name = format("dataset_{:d}", i+ds_offset)
         g[ds_name] = Matrix(tab.hits)
