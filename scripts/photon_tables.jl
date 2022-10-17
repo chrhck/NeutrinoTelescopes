@@ -114,7 +114,7 @@ global_logger(TerminalLogger(right_justify=120))
         orientation = rand(RotMatrix3)
         hits = make_hits_from_photons(photons, target, medium, orientation)
 
-        if nrow(hits) == 0
+        if nrow(hits) < 10
             continue
         end
 
