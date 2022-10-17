@@ -16,6 +16,43 @@ using Logging: global_logger
 using Sobol
 using ArgParse
 
+Base.@kwdef struct PhotonTable{T}
+    hits::T
+    energy::Float64
+    distance::Float64
+    dir_theta::Float64
+    dir_phi::Float64
+    pos_theta::Float64
+    pos_phi::Float64
+end
+
+
+function save_photon_table(fname::AbstractString, res::PhotonTable)
+
+    if isfile(fname)
+        fid = h5open(fname, "r+")
+        ds_offset = length(fid["photon_tables"])+1
+        g = fid["photon_tables"]
+    else
+        fid = h5open(fname, "w")
+        ds_offset = 1
+        g = create_group(fid, "photon_tables")
+    end
+
+   
+    ds_name = format("dataset_{:d}", ds_offset)
+    g[ds_name] = Matrix(res.hits)
+
+    for name in fieldnames(typeof(res))
+        if name == :hits
+            continue
+        end
+        HDF5.attributes(g[ds_name])[String(name)] = getfield(res, name)
+    end
+
+    close(fid)
+end
+
 
 s = ArgParseSettings()
 @add_arg_table s begin
@@ -47,26 +84,16 @@ spectrum = CherenkovSpectrum((300f0, 800f0), 30, medium)
 
 oversample = 1.
 
-Base.@kwdef struct PhotonTable{T}
-    hits::T
-    energy::Float64
-    distance::Float64
-    dir_theta::Float64
-    dir_phi::Float64
-    pos_theta::Float64
-    pos_phi::Float64
-end
+
 
 n_sims = parsed_args["n_sims"]
 n_skip = parsed_args["n_skip"]
 
 sobol = skip(
     SobolSeq(
-        [2, log10(5), -1, 0],
+        [2, log10(10), -1, 0],
         [6, log10(300), 1, 2*π]),
     n_sims+n_skip)
-
-results = Vector{PhotonTable{DataFrame}}()
 
 global_logger(TerminalLogger(right_justify=120))
 
@@ -137,8 +164,9 @@ global_logger(TerminalLogger(right_justify=120))
         dir_theta, dir_phi = cart_to_sph(direction_rot)
         pos_theta, pos_phi = cart_to_sph(position_rot_normed)
 
-        push!(
-            results,
+
+        save_photon_table(
+            joinpath(outdir, "photon_table.hd5"),
             PhotonTable(
                 hits=hits,
                 energy=energy,
@@ -147,40 +175,11 @@ global_logger(TerminalLogger(right_justify=120))
                 dir_phi=dir_phi,
                 pos_theta=pos_theta,
                 pos_phi=pos_phi)
-        )
-
-
+            )
     end
-
 end
 
 
-function save_photon_tables(fname, res::AbstractVector{<:PhotonTable})
 
-    if isfile(fname)
-        fid = h5open(fname, "r+")
-        ds_offset = length(fid["photon_tables"])
-        g = fid["photon_tables"]
-    else
-        fid = h5open(fname, "w")
-        ds_offset = 0
-        g = create_group(fid, "photon_tables")
-    end
 
-    for (i, tab) in enumerate(res)
-        ds_name = format("dataset_{:d}", i+ds_offset)
-        g[ds_name] = Matrix(tab.hits)
-
-        for name in fieldnames(eltype(res))
-            if name == :hits
-                continue
-            end
-            HDF5.attributes(g[ds_name])[String(name)] = getfield(tab, name)
-        end
-
-    end
-
-    close(fid)
-end
-
-save_photon_tables(joinpath(outdir, "photon_table.hd5"), results)
+save_photon_tables(, results)
