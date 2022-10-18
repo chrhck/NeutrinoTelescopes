@@ -29,8 +29,6 @@ export plot_hits, plot_pmt_map, map_f_over_pmts
 
 
 function calc_gamma_shape_mean_fwhm(mean, target_fwhm)
-
-
     function _optim(theta)
         alpha = mean / theta
         tt_dist = Gamma(alpha, theta)
@@ -39,7 +37,6 @@ function calc_gamma_shape_mean_fwhm(mean, target_fwhm)
 
     find_zero(_optim, [0.1*target_fwhm^2/mean, 10*target_fwhm^2/mean], A42())
 end
-
 
 
 @kwdef struct PMTConfig{ T<:Real, S <: SPEDistribution{T}, P<:PulseTemplate, U<:PulseTemplate, V<:UnivariateDistribution}
@@ -88,9 +85,19 @@ STD_PMT_CONFIG = PMTConfig(
 
 function resample_simulation(hit_times, total_weights, downsample=1.)
     wsum = sum(total_weights)
+
+    mask = total_weights .> 0
+    hit_times = hit_times[mask]
+    total_weights = total_weights[mask]
+
     norm_weights = ProbabilityWeights(copy(total_weights), wsum)
     nhits = min(pois_rand(wsum*downsample), length(hit_times))
-    sample(hit_times, norm_weights, nhits; replace=false)
+    try
+        sample(hit_times, norm_weights, nhits; replace=false)
+    catch e
+        @show length(hit_times)
+        error("error")
+    end
 end
 
 

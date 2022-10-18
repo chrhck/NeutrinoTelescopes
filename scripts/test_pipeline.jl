@@ -11,6 +11,13 @@ using DTables
 using BenchmarkTools
 using CUDA
 
+
+hits_test = DataFrame(time=[0, 0, 0], pmt_id=[1, 1, 2], total_weight=[0, 0, 0])
+resample_simulation(hits_test)
+
+
+
+
 distance = 20f0
 medium = make_cascadia_medium_properties(Float32)
 pmt_area=Float32((75e-3 / 2)^2*π)
