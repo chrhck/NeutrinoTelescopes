@@ -39,7 +39,7 @@ function save_photon_table(fname::AbstractString, res::PhotonTable)
         g = create_group(fid, "photon_tables")
     end
 
-    
+
     ds_name = format("dataset_{:d}", ds_offset)
     g[ds_name] = Matrix{Float64}(res.hits[:, [:time, :pmt_id, :total_weight]])
 
@@ -56,6 +56,10 @@ end
 
 s = ArgParseSettings()
 @add_arg_table s begin
+    "--output"
+        help = "Output filename"
+        arg_type = String
+        required = true
     "--n_sims"
         help = "Number of simulations"
         arg_type = Int
@@ -78,11 +82,6 @@ function run_sim(parsed_args)
     pmt_area=Float32((75e-3 / 2)^2*π)
     target_radius = 0.21f0
 
-    outdir = joinpath(@__DIR__, "../assets/")
-
-    dfs = []
-    sim_params = []
-
     spectrum = CherenkovSpectrum((300f0, 800f0), 30, medium)
 
     oversample = 1.
@@ -93,7 +92,7 @@ function run_sim(parsed_args)
     sobol = skip(
         SobolSeq(
             [2, log10(10), -1, 0],
-            [5, log10(100), 1, 2*π]),
+            [5, log10(150), 1, 2*π]),
         n_sims+n_skip)
 
     global_logger(TerminalLogger(right_justify=120))
@@ -128,7 +127,7 @@ function run_sim(parsed_args)
         photons = DataFrame()
 
         while true
-        
+
             prop_source = ExtendedCherenkovEmitter(particle, medium, (300f0, 800f0); oversample=oversample)
             if prop_source.photons > 1E13
                 println("More than 1E13 photons, skipping")
@@ -151,7 +150,7 @@ function run_sim(parsed_args)
             orientation = rand(RotMatrix3)
             hits = make_hits_from_photons(photons, target, medium, orientation)
 
-            hits[!, :total_weight] .*= oversample
+            hits[!, :total_weight] ./= oversample
             if nrow(hits) < 10
                 continue
             end
@@ -184,7 +183,7 @@ function run_sim(parsed_args)
 
 
             save_photon_table(
-                joinpath(outdir, "photon_table.hd5"),
+                parsed_args["output"],
                 PhotonTable(
                     hits=hits,
                     energy=energy,
