@@ -31,7 +31,7 @@ function save_photon_table(fname::AbstractString, res::PhotonTable)
 
     if isfile(fname)
         fid = h5open(fname, "r+")
-        ds_offset = length(fid["photon_tables"])+1
+        ds_offset = length(fid["photon_tables"]) + 1
         g = fid["photon_tables"]
     else
         fid = h5open(fname, "w")
@@ -57,18 +57,18 @@ end
 s = ArgParseSettings()
 @add_arg_table s begin
     "--output"
-        help = "Output filename"
-        arg_type = String
-        required = true
+    help = "Output filename"
+    arg_type = String
+    required = true
     "--n_sims"
-        help = "Number of simulations"
-        arg_type = Int
-        required = true
+    help = "Number of simulations"
+    arg_type = Int
+    required = true
     "--n_skip"
-        help = "Skip in Sobol sequence"
-        arg_type = Int
-        required = false
-        default = 0
+    help = "Skip in Sobol sequence"
+    arg_type = Int
+    required = false
+    default = 0
 end
 parsed_args = parse_args(ARGS, s)
 
@@ -79,12 +79,12 @@ function run_sim(parsed_args)
     parsed_args = Dict("n_sims"=>1, "n_skip"=>0)
     =#
     medium = make_cascadia_medium_properties(0.99f0)
-    pmt_area=Float32((75e-3 / 2)^2*π)
+    pmt_area = Float32((75e-3 / 2)^2 * π)
     target_radius = 0.21f0
 
-    spectrum = CherenkovSpectrum((300f0, 800f0), 30, medium)
+    spectrum = CherenkovSpectrum((300.0f0, 800.0f0), 30, medium)
 
-    oversample = 1.
+    oversample = 1.0
 
     n_sims = parsed_args["n_sims"]
     n_skip = parsed_args["n_skip"]
@@ -92,8 +92,8 @@ function run_sim(parsed_args)
     sobol = skip(
         SobolSeq(
             [2, log10(10), -1, 0],
-            [5, log10(150), 1, 2*π]),
-        n_sims+n_skip)
+            [5, log10(150), 1, 2 * π]),
+        n_sims + n_skip)
 
     global_logger(TerminalLogger(right_justify=120))
 
@@ -106,29 +106,29 @@ function run_sim(parsed_args)
         dir_phi = pars[4]
 
         target = MultiPMTDetector(
-            @SVector[0f0, 0f0, 0f0],
+            @SVector[0.0f0, 0.0f0, 0.0f0],
             target_radius,
             pmt_area,
             make_pom_pmt_coordinates(Float32)
         )
 
-        direction::SVector{3, Float32} = sph_to_cart(acos(dir_costheta), dir_phi)
+        direction::SVector{3,Float32} = sph_to_cart(acos(dir_costheta), dir_phi)
 
-        ppos =  @SVector[0.0f0, 0f0, distance]
+        ppos = @SVector[0.0f0, 0.0f0, distance]
         particle = Particle(
             ppos,
             direction,
-            0f0,
+            0.0f0,
             Float32(energy),
             PEMinus
         )
 
-        oversample = 1.
+        oversample = 1.0
         photons = DataFrame()
 
         while true
 
-            prop_source = ExtendedCherenkovEmitter(particle, medium, (300f0, 800f0); oversample=oversample)
+            prop_source = ExtendedCherenkovEmitter(particle, medium, (300.0f0, 800.0f0); oversample=oversample)
             if prop_source.photons > 1E13
                 println("More than 1E13 photons, skipping")
                 break
@@ -150,18 +150,19 @@ function run_sim(parsed_args)
             orientation = rand(RotMatrix3)
             hits = make_hits_from_photons(photons, target, medium, orientation)
 
-            hits[!, :total_weight] ./= oversample
             if nrow(hits) < 10
                 continue
             end
 
-            #=
-            hits = resample_simulation(hits; per_pmt=true, downsample=1/oversample)
 
+            hits = resample_simulation(hits; per_pmt=true, downsample=1 / oversample)
+            #hits[!, :total_weight] ./= oversample
             if nrow(hits) == 0
                 continue
             end
-            =#
+
+            calc_time_residual!(hits, prop_source, target, medium)
+
 
             #=
             Rotating the module (active rotation) is equivalent to rotating the coordinate system
@@ -192,7 +193,7 @@ function run_sim(parsed_args)
                     dir_phi=dir_phi,
                     pos_theta=pos_theta,
                     pos_phi=pos_phi)
-                )
+            )
         end
     end
 end

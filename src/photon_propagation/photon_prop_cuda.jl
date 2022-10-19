@@ -17,7 +17,7 @@ export cuda_propagate_photons!, initialize_photon_arrays, process_output
 export cuda_propagate_multi_target!
 export cherenkov_ang_dist, cherenkov_ang_dist_int
 export make_hits_from_photons, propagate_photons, run_photon_prop
-export calc_time_residual
+export calc_time_residual!
 
 using ...Utils
 using ...Types
@@ -62,9 +62,9 @@ CUDA-optimized version of Henyey-Greenstein scattering in one plane.
 end
 
 
-struct PhotonState{T, U}
-    position::SVector{3, T}
-    direction::SVector{3, T}
+struct PhotonState{T,U}
+    position::SVector{3,T}
+    direction::SVector{3,T}
     time::U
     wavelength::T
 end
@@ -89,7 +89,7 @@ Sample a direction isotropically
 end
 
 
-@inline function sample_cherenkov_direction(source::CherenkovEmitter{T}, medium::MediumProperties, wl::T) where {T <: Real}
+@inline function sample_cherenkov_direction(source::CherenkovEmitter{T}, medium::MediumProperties, wl::T) where {T<:Real}
 
     # Sample a photon direction. Assumes track is aligned with e_z
     theta_cherenkov = cherenkov_angle(wl, medium)
@@ -98,7 +98,7 @@ end
 
 
     # Sample a direction of a "Cherenkov track". Assumes source direction is e_z
-    track_dir::SVector{3, T} = sample_cherenkov_track_direction(T)
+    track_dir::SVector{3,T} = sample_cherenkov_track_direction(T)
 
     # Rotate photon to track direction
     ph_dir = rot_from_ez_fast(track_dir, ph_dir)
@@ -112,17 +112,17 @@ end
 
 @inline initialize_wavelength(::T) where {T<:Spectrum} = throw(ArgumentError("Cannot initialize $T"))
 @inline initialize_wavelength(spectrum::Monochromatic{T}) where {T} = spectrum.wavelength
-@inline initialize_wavelength(spectrum::CherenkovSpectrum{T, P}) where {T, P} = @inbounds spectrum.texture[rand(T)]
+@inline initialize_wavelength(spectrum::CherenkovSpectrum{T,P}) where {T,P} = @inbounds spectrum.texture[rand(T)]
 
 
-@inline function initialize_photon_state(source::PointlikeIsotropicEmitter{T}, ::MediumProperties, spectrum::Spectrum) where {T <: Real}
+@inline function initialize_photon_state(source::PointlikeIsotropicEmitter{T}, ::MediumProperties, spectrum::Spectrum) where {T<:Real}
     wl = initialize_wavelength(spectrum)
     pos = source.position
     dir = initialize_direction_isotropic(T)
     PhotonState(pos, dir, source.time, wl)
 end
 
-@inline function initialize_photon_state(source::PointlikeTimeRangeEmitter{T, U}, ::MediumProperties, spectrum::Spectrum) where {T <: Real, U<:Real}
+@inline function initialize_photon_state(source::PointlikeTimeRangeEmitter{T,U}, ::MediumProperties, spectrum::Spectrum) where {T<:Real,U<:Real}
     wl = initialize_wavelength(spectrum)
     pos = source.position
     dir = initialize_direction_isotropic(T)
@@ -130,7 +130,7 @@ end
     PhotonState(pos, dir, time, wl)
 end
 
-@inline function initialize_photon_state(source::AxiconeEmitter{T}, ::MediumProperties, spectrum::Spectrum) where {T <: Real}
+@inline function initialize_photon_state(source::AxiconeEmitter{T}, ::MediumProperties, spectrum::Spectrum) where {T<:Real}
     wl = initialize_wavelength(spectrum)
     pos = source.position
     phi = uniform(T(0), T(2 * pi))
@@ -140,19 +140,19 @@ end
     PhotonState(pos, dir, source.time, wl)
 end
 
-@inline function initialize_photon_state(source::PencilEmitter{T}, ::MediumProperties, spectrum::Spectrum) where {T <: Real}
+@inline function initialize_photon_state(source::PencilEmitter{T}, ::MediumProperties, spectrum::Spectrum) where {T<:Real}
     wl = initialize_wavelength(spectrum)
     PhotonState(source.position, source.direction, source.time, wl)
 end
 
 
-@inline function initialize_photon_state(source::ExtendedCherenkovEmitter{T}, medium::MediumProperties, spectrum::Spectrum) where {T <:Real}
+@inline function initialize_photon_state(source::ExtendedCherenkovEmitter{T}, medium::MediumProperties, spectrum::Spectrum) where {T<:Real}
     #wl = initialize_wavelength(source.spectrum)
     wl = initialize_wavelength(spectrum)
 
     long_pos = rand_gamma(T(source.long_param.a), T(1 / source.long_param.b), Float32) * source.long_param.lrad
 
-    pos::SVector{3, T} = source.position .+ long_pos .* source.direction
+    pos::SVector{3,T} = source.position .+ long_pos .* source.direction
     time = source.time + long_pos / T(c_vac_m_ns)
 
     ph_dir = sample_cherenkov_direction(source, medium, wl)
@@ -160,11 +160,11 @@ end
     PhotonState(pos, ph_dir, time, wl)
 end
 
-@inline function initialize_photon_state(source::PointlikeCherenkovEmitter{T}, medium::MediumProperties, spectrum::Spectrum) where {T <:Real}
+@inline function initialize_photon_state(source::PointlikeCherenkovEmitter{T}, medium::MediumProperties, spectrum::Spectrum) where {T<:Real}
     #wl = initialize_wavelength(source.spectrum)
     wl = initialize_wavelength(spectrum)
 
-    pos::SVector{3, T} = source.position
+    pos::SVector{3,T} = source.position
     time = source.time
 
     ph_dir = sample_cherenkov_direction(source, medium, wl)
@@ -258,7 +258,7 @@ function cuda_propagate_photons!(
     spectrum::Spectrum,
     target_pos::SVector{3,T},
     target_r::T,
-    ::Val{MediumProp}) where {T, MediumProp}
+    ::Val{MediumProp}) where {T,MediumProp}
 
     block = blockIdx().x
     thread = threadIdx().x
@@ -370,7 +370,7 @@ function cuda_propagate_photons_no_local_cache!(
     spectrum::Spectrum,
     target_pos::SVector{3,T},
     target_r::T,
-    ::Val{MediumProp}) where {T, MediumProp}
+    ::Val{MediumProp}) where {T,MediumProp}
 
     block = blockIdx().x
     thread = threadIdx().x
@@ -386,7 +386,7 @@ function cuda_propagate_photons_no_local_cache!(
     this_n_photons, remainder = divrem(source.photons, n_threads_total)
 
     if global_thread_index <= remainder
-        this_n_photons +=1
+        this_n_photons += 1
     end
 
     medium::MediumProperties{T} = MediumProp
@@ -726,19 +726,19 @@ end
 
 
 function calculate_gpu_memory_usage(stack_length, blocks)
-    return sizeof(SVector{3, Float32}) * 2 * stack_length * blocks +
+    return sizeof(SVector{3,Float32}) * 2 * stack_length * blocks +
            sizeof(Float32) * 3 * stack_length * blocks +
            sizeof(Int32) * blocks +
            sizeof(Int64)
 end
 
 function calculate_max_stack_size(total_mem, blocks)
-    return convert(Int32, floor((total_mem - sizeof(Int64) -  sizeof(Int32) * blocks) / (sizeof(SVector{3, Float32}) * 2 * blocks +  sizeof(Float32) * 3 * blocks)))
+    return convert(Int32, floor((total_mem - sizeof(Int64) - sizeof(Int32) * blocks) / (sizeof(SVector{3,Float32}) * 2 * blocks + sizeof(Float32) * 3 * blocks)))
 end
 
 function calculate_max_stack_size(total_mem)
-    one_event = sizeof(SVector{3, Float32}) * 2 + sizeof(Float32) * 3
-    return Int64(fld(total_mem-2*(sizeof(Int64)), one_event))
+    one_event = sizeof(SVector{3,Float32}) * 2 + sizeof(Float32) * 3
+    return Int64(fld(total_mem - 2 * (sizeof(Int64)), one_event))
 end
 
 
@@ -753,14 +753,14 @@ function run_photon_prop(
     positions, directions, wavelengths, dist_travelled, times, stack_idx, n_ph_sim = initialize_photon_arrays(1, 1, Float32)
     err_code = CuVector(zeros(Int32, 1))
 
-    kernel = @cuda launch=false cuda_propagate_photons!(
+    kernel = @cuda launch = false cuda_propagate_photons!(
         positions, directions, wavelengths, dist_travelled, times, stack_idx, n_ph_sim, err_code, Int32(1E6), Int64(0),
         source, spectrum, target.position, target.radius, Val(medium))
 
     blocks, threads = CUDA.launch_configuration(kernel.fun, shmem=sizeof(Int64))
 
     avail_mem = CUDA.totalmem(collect(CUDA.devices())[1])
-    max_total_stack_len = calculate_max_stack_size(0.5*avail_mem, blocks)
+    max_total_stack_len = calculate_max_stack_size(0.5 * avail_mem, blocks)
     stack_len = Int32(cld(max_total_stack_len, blocks))
 
     positions, directions, wavelengths, dist_travelled, times, stack_idx, n_ph_sim = initialize_photon_arrays(stack_len, blocks, Float32)
@@ -777,16 +777,14 @@ function run_photon_prop_no_local_cache(
     target::PhotonTarget,
     medium::MediumProperties,
     spectrum::Spectrum;
-    time_type::Type=Float32
-
-)
+    time_type::Type=Float32)
     avail_mem = CUDA.totalmem(collect(CUDA.devices())[1])
-    max_total_stack_len = calculate_max_stack_size(0.7*avail_mem)
+    max_total_stack_len = calculate_max_stack_size(0.7 * avail_mem)
     positions, directions, wavelengths, dist_travelled, times, stack_idx, n_ph_sim = initialize_photon_arrays(max_total_stack_len, Float32, time_type)
     err_code = CuVector(zeros(Int32, 1))
 
 
-    kernel = @cuda launch=false PhotonPropagationCuda.cuda_propagate_photons_no_local_cache!(
+    kernel = @cuda launch = false PhotonPropagationCuda.cuda_propagate_photons_no_local_cache!(
         positions, directions, wavelengths, dist_travelled, times, stack_idx, n_ph_sim, err_code, Int64(0),
         sources[1], spectrum, target.position, target.radius, Val(medium))
 
@@ -870,7 +868,7 @@ function make_hits_from_photons(
     df
 end
 
-function calc_time_residual(
+function calc_time_residual!(
     df::AbstractDataFrame,
     source::PhotonSource,
     target::PhotonTarget,
@@ -881,6 +879,5 @@ function calc_time_residual(
     tgeo = (distance - target.radius) ./ (c_vac / refractive_index(800.0f0, medium))
     df[!, :tres] = (df[:, :time] .- tgeo)
 end
-
 
 end # module
