@@ -140,8 +140,7 @@ function run_sim(parsed_args)
         end
 
         calc_time_residual!(photons, prop_source, target, medium)
-        transform!(photons, :position => ByRow(p -> (pos_x=p[1], pos_y=p[2], pos_z=p[3]) => AsTable))
-        @show names(photons)
+        transform!(photons, :position => (col -> hcat(col...)') => AsTable)
         calc_total_weight!(photons, target, medium)
         photons[!, :total_weight] ./= oversample
 
