@@ -101,16 +101,16 @@ function resample_simulation(hit_times, total_weights, downsample=1.)
 end
 
 
-function resample_simulation(df::AbstractDataFrame; downsample=1., per_pmt=true)
+function resample_simulation(df::AbstractDataFrame; downsample=1., per_pmt=true, time_col=:time)
 
 
     wrapped(hit_times, total_weights) = resample_simulation(hit_times, total_weights, downsample)
 
     if per_pmt
         groups = groupby(df, :pmt_id)
-        resampled_hits = combine(groups, [:time, :total_weight] => wrapped => :time)
+        resampled_hits = combine(groups, [time_col, :total_weight] => wrapped => time_col)
     else
-        resampled_hits = combine(df, [:time, :total_weight] => wrapped => :time)
+        resampled_hits = combine(df, [time_col, :total_weight] => wrapped => time_col)
     end
     resampled_hits
 end

@@ -19,48 +19,38 @@ function save_hdf!(
     dataset::Matrix,
     attributes::Dict)
 
+    
     if isfile(fname)
         fid = h5open(fname, "r+")
-        g = fid[group]
-        f_attrs = HDF5.attributes(g)
-
     else
         fid = h5open(fname, "w")
-        g = create_group(fid, group)
-        f_attrs = HDF5.attributes(g)
-        f_attrs["nsims"] = 0
     end
 
-    offset = f_attrs["nsims"] + 1
+    if !haskey(fid, group)
+        g = create_group(fid, group)
+        HDF5.attrs(g)["nsims"] = 0
+    else
+        g = fid[group]
+    end
+
+
+    offset = HDF5.read_attribute(g, "nsims") + 1
     ds_name = format("dataset_{:d}", offset)
 
     g[ds_name] = dataset# Matrix{Float64}(res.hits[:, [:tres, :pmt_id]])
-    f_attrs = HDF5.attributes(g[ds_name])
+    f_attrs = HDF5.attrs(g[ds_name])
     for (k, v) in attributes
         f_attrs[k] = v
     end
+
+    HDF5.attrs(g)["nsims"] = offset
+
+    close(fid)
 end
 
-s = ArgParseSettings()
-@add_arg_table s begin
-    "--output"
-    help = "Output filename"
-    arg_type = String
-    required = true
-    "--n_sims"
-    help = "Number of simulations"
-    arg_type = Int
-    required = true
-    "--n_skip"
-    help = "Skip in Sobol sequence"
-    arg_type = Int
-    required = false
-    default = 0
-end
-parsed_args = parse_args(ARGS, s)
 
 
-function run_sim(energy, distance, dir_costheta, dir_phi, target, spectrum, medium)
+function run_sim(energy, distance, dir_costheta, dir_phi, target, spectrum, medium, output_fname)
     sim_attrs = Dict(
         "energy" => energy,
         "distance" => distance,
@@ -103,16 +93,15 @@ function run_sim(energy, distance, dir_costheta, dir_phi, target, spectrum, medi
     end
 
     calc_time_residual!(photons, prop_source, target, medium)
-    transform!(photons, :position => (col -> hcat(col...)') => [:pos_x, :pos_y, :pos_z])
+    
+    transform!(photons, :position => (p -> reduce(hcat, p)') => [:pos_x, :pos_y, :pos_z])
     calc_total_weight!(photons, target, medium)
     photons[!, :total_weight] ./= oversample
-
     save_hdf!(
-        parsed_args["output"],
+        output_fname,
         "photons",
         Matrix{Float64}(photons[:, [:tres, :pos_x, :pos_y, :pos_z, :total_weight]]),
         sim_attrs)
-
 
     @progress "Resampling" for j in 1:100
         #=
@@ -127,7 +116,7 @@ function run_sim(energy, distance, dir_costheta, dir_phi, target, spectrum, medi
         end
 
 
-        hits = resample_simulation(hits; per_pmt=true)
+        hits = resample_simulation(hits; per_pmt=true, time_col=:tres)
         #hits[!, :total_weight] ./= oversample
         if nrow(hits) == 0
             continue
@@ -157,7 +146,7 @@ function run_sim(energy, distance, dir_costheta, dir_phi, target, spectrum, medi
         sim_attrs["pos_phi"] = pos_phi
 
         save_hdf!(
-            parsed_args["output"],
+            output_fname,
             "pmt_hits",
             Matrix{Float64}(hits[:, [:tres, :pmt_id]]),
             sim_attrs)
@@ -201,8 +190,45 @@ function run_sims(parsed_args)
         dir_costheta = pars[3]
         dir_phi = pars[4]
 
-        run_sim(energy, distance, dir_costheta, dir_phi, target, spectrum, medium)
+        run_sim(energy, distance, dir_costheta, dir_phi, target, spectrum, medium, parsed_args["output"])
     end
 end
 
+s = ArgParseSettings()
+@add_arg_table s begin
+    "--output"
+    help = "Output filename"
+    arg_type = String
+    required = true
+    "--n_sims"
+    help = "Number of simulations"
+    arg_type = Int
+    required = true
+    "--n_skip"
+    help = "Skip in Sobol sequence"
+    arg_type = Int
+    required = false
+    default = 0
+end
+parsed_args = parse_args(ARGS, s)
+
+
 run_sims(parsed_args)
+
+#=
+
+medium = make_cascadia_medium_properties(0.99f0)
+pmt_area = Float32((75e-3 / 2)^2 * π)
+target_radius = 0.21f0
+target = MultiPMTDetector(
+    @SVector[0.0f0, 0.0f0, 0.0f0],
+    target_radius,
+    pmt_area,
+    make_pom_pmt_coordinates(Float32)
+)
+spectrum = CherenkovSpectrum((300.0f0, 800.0f0), 30, medium)
+
+
+run_sim(1E4, 15f0, 0.5, 0.3, target, spectrum, medium, "test.hd5" )
+
+#=
