@@ -61,6 +61,7 @@ s = ArgParseSettings()
     default = 0
 end
 parsed_args = parse_args(ARGS, s)
+parsed_args = Dict("n_sims" => 5)
 
 
 function run_sim(parsed_args)
@@ -143,7 +144,8 @@ function run_sim(parsed_args)
         end
 
         calc_time_residual!(photons, prop_source, target, medium)
-        transform!(photons, :position => ByRow(p -> (pos_x=p[1], pos_y=p[2], pos_z=p[3])))
+        transform!(photons, :position => ByRow(p -> (pos_x=p[1], pos_y=p[2], pos_z=p[3]) => AsTable))
+        @show names(photons)
         calc_total_weight!(photons, target, medium)
         photons[!, :total_weight] ./= oversample
 
