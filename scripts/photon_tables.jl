@@ -124,10 +124,10 @@ function run_sim(parsed_args)
         )
 
         oversample = 1.0
-        photons = DataFrame()
+        photons = nothing
+        prop_source = nothing
 
         while true
-
             prop_source = ExtendedCherenkovEmitter(particle, medium, (300.0f0, 800.0f0); oversample=oversample)
             if prop_source.photons > 1E13
                 println("More than 1E13 photons, skipping")
@@ -140,6 +140,10 @@ function run_sim(parsed_args)
                 break
             end
             oversample *= 10
+        end
+
+        if isnothing(photons)
+            continue
         end
 
         @progress "Resampling" for j in 1:100
