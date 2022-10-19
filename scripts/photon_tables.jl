@@ -41,7 +41,7 @@ function save_photon_table(fname::AbstractString, res::PhotonTable)
 
 
     ds_name = format("dataset_{:d}", ds_offset)
-    g[ds_name] = Matrix{Float64}(res.hits[:, [:time, :pmt_id, :total_weight]])
+    g[ds_name] = Matrix{Float64}(res.hits[:, [:tres, :pmt_id]])
 
     for name in fieldnames(typeof(res))
         if name == :hits
