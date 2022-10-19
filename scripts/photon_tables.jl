@@ -4,10 +4,7 @@ using Random
 using DataFrames
 using ProgressLogging
 using Formatting
-using JSON
-using Arrow
 using Distributions
-using CairoMakie
 using Rotations
 using LinearAlgebra
 using HDF5
@@ -61,7 +58,6 @@ s = ArgParseSettings()
     default = 0
 end
 parsed_args = parse_args(ARGS, s)
-parsed_args = Dict("n_sims" => 5)
 
 
 function run_sim(parsed_args)
