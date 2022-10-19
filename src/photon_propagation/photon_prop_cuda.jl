@@ -17,7 +17,7 @@ export cuda_propagate_photons!, initialize_photon_arrays, process_output
 export cuda_propagate_multi_target!
 export cherenkov_ang_dist, cherenkov_ang_dist_int
 export make_hits_from_photons, propagate_photons, run_photon_prop
-export calc_time_residual!
+export calc_time_residual!, calc_total_weight!
 
 using ...Utils
 using ...Types
@@ -844,17 +844,11 @@ function propagate_photons(
 end
 
 
-function make_hits_from_photons(
+function calc_total_weight!(
     df::AbstractDataFrame,
     target::PhotonTarget,
     medium::MediumProperties,
-    target_orientation::AbstractMatrix{<:Real})
-
-
-    df[:, :pmt_id] = check_pmt_hit(df[:, :position], target, target_orientation)
-
-    df = subset(df, :pmt_id => x -> x .> 0)
-
+)
     df[!, :area_acc] = area_acceptance.(df[:, :position], Ref(target))
 
     abs_length = absorption_length.(df[:, :wavelength], Ref(medium))
@@ -865,6 +859,17 @@ function make_hits_from_photons(
     df[!, :ref_ix] = refractive_index.(df[:, :wavelength], Ref(medium))
 
     df[!, :total_weight] = df[:, :area_acc] .* df[:, :wl_acc] .* df[:, :abs_weight]
+
+    return df
+end
+
+function make_hits_from_photons(
+    df::AbstractDataFrame,
+    target::PhotonTarget,
+    target_orientation::AbstractMatrix{<:Real})
+
+    df[:, :pmt_id] = check_pmt_hit(df[:, :position], target, target_orientation)
+    df = subset(df, :pmt_id => x -> x .> 0)
     df
 end
 

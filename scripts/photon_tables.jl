@@ -16,43 +16,33 @@ using Logging: global_logger
 using Sobol
 using ArgParse
 
-Base.@kwdef struct PhotonTable{T}
-    hits::T
-    energy::Float64
-    distance::Float64
-    dir_theta::Float64
-    dir_phi::Float64
-    pos_theta::Float64
-    pos_phi::Float64
-end
-
-
-function save_photon_table(fname::AbstractString, res::PhotonTable)
+function save_hdf!(
+    fname::AbstractString,
+    group::AbstractString,
+    dataset::Matrix,
+    attributes::Dict)
 
     if isfile(fname)
         fid = h5open(fname, "r+")
-        ds_offset = length(fid["photon_tables"]) + 1
-        g = fid["photon_tables"]
+        g = fid[group]
+        f_attrs = HDF5.attributes(g)
+
     else
         fid = h5open(fname, "w")
-        ds_offset = 1
-        g = create_group(fid, "photon_tables")
+        g = create_group(fid, group)
+        f_attrs = HDF5.attributes(g)
+        f_attrs["nsims"] = 0
     end
 
+    offset = f_attrs["nsims"] + 1
+    ds_name = format("dataset_{:d}", offset)
 
-    ds_name = format("dataset_{:d}", ds_offset)
-    g[ds_name] = Matrix{Float64}(res.hits[:, [:tres, :pmt_id]])
-
-    for name in fieldnames(typeof(res))
-        if name == :hits
-            continue
-        end
-        HDF5.attributes(g[ds_name])[String(name)] = getfield(res, name)
+    g[ds_name] = dataset# Matrix{Float64}(res.hits[:, [:tres, :pmt_id]])
+    f_attrs = HDF5.attributes(g[ds_name])
+    for (k, v) in attributes
+        f_attrs[k] = v
     end
-
-    close(fid)
 end
-
 
 s = ArgParseSettings()
 @add_arg_table s begin
@@ -105,6 +95,12 @@ function run_sim(parsed_args)
         dir_costheta = pars[3]
         dir_phi = pars[4]
 
+        sim_attrs = Dict(
+            "energy" => energy,
+            "distance" => distance,
+            "dir_costheta" => dir_costheta,
+            "dir_phi" => dir_phi)
+
         target = MultiPMTDetector(
             @SVector[0.0f0, 0.0f0, 0.0f0],
             target_radius,
@@ -146,27 +142,36 @@ function run_sim(parsed_args)
             continue
         end
 
+        calc_time_residual!(photons, prop_source, target, medium)
+        transform!(photons, :position => ByRow(p -> (pos_x=p[1], pos_y=p[2], pos_z=p[3])))
+        calc_total_weight!(photons, target, medium)
+        photons[!, :total_weight] ./= oversample
+
+        save_hdf!(
+            parsed_args["output"],
+            "photons",
+            Matrix{Float64}(photons[:, [:tres, :pos_x, :pos_y, :pos_z, :total_weight]]),
+            sim_attrs)
+
+
         @progress "Resampling" for j in 1:100
             #=
             PMT positions are defined in a standard upright coordinate system centeres at the module
             Sample a random rotation matrix and rotate the pmts on the module accordingly.
             =#
             orientation = rand(RotMatrix3)
-            hits = make_hits_from_photons(photons, target, medium, orientation)
+            hits = make_hits_from_photons(photons, target, orientation)
 
             if nrow(hits) < 10
                 continue
             end
 
 
-            hits = resample_simulation(hits; per_pmt=true, downsample=1 / oversample)
+            hits = resample_simulation(hits; per_pmt=true)
             #hits[!, :total_weight] ./= oversample
             if nrow(hits) == 0
                 continue
             end
-
-            calc_time_residual!(hits, prop_source, target, medium)
-
 
             #=
             Rotating the module (active rotation) is equivalent to rotating the coordinate system
@@ -186,18 +191,16 @@ function run_sim(parsed_args)
                 error("Relative angle not perseved")
             end
 
+            sim_attrs["dir_theta"] = dir_theta
+            sim_attrs["dir_phi"] = dir_phi
+            sim_attrs["pos_theta"] = pos_theta
+            sim_attrs["pos_phi"] = pos_phi
 
-            save_photon_table(
+            save_hdf!(
                 parsed_args["output"],
-                PhotonTable(
-                    hits=hits,
-                    energy=energy,
-                    distance=Float64(distance),
-                    dir_theta=dir_theta,
-                    dir_phi=dir_phi,
-                    pos_theta=pos_theta,
-                    pos_phi=pos_phi)
-            )
+                "pmt_hits",
+                Matrix{Float64}(hits[:, [:tres, :pmt_id]]),
+                sim_attrs)
         end
     end
 end
