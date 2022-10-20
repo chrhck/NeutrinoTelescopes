@@ -19,7 +19,7 @@ function save_hdf!(
     dataset::Matrix,
     attributes::Dict)
 
-    
+
     if isfile(fname)
         fid = h5open(fname, "r+")
     else
@@ -49,8 +49,17 @@ function save_hdf!(
 end
 
 
+function run_sim(
+    energy,
+    distance,
+    dir_costheta,
+    dir_phi,
+    target,
+    spectrum,
+    medium,
+    output_fname;
+    extended=true)
 
-function run_sim(energy, distance, dir_costheta, dir_phi, target, spectrum, medium, output_fname)
     sim_attrs = Dict(
         "energy" => energy,
         "distance" => distance,
@@ -69,33 +78,38 @@ function run_sim(energy, distance, dir_costheta, dir_phi, target, spectrum, medi
         PEMinus
     )
 
+    if extended
+        source = ExtendedCherenkovEmitter(particle, medium, (300.0f0, 800.0f0))
+    else
+        source = PointlikeCherenkovEmitter(particle, medium, (300.0f0, 800.0f0))
+    end
+
     oversample = 1.0
     photons = nothing
-    prop_source = nothing
+
+    setup = PhotonPropSetup(source, target, medium, spectrum)
 
     while true
-        prop_source = ExtendedCherenkovEmitter(particle, medium, (300.0f0, 800.0f0); oversample=oversample)
+        prop_source = setup.sources[1]
         if prop_source.photons > 1E13
             println("More than 1E13 photons, skipping")
-            break
+            return nothing
         end
-        photons = propagate_photons(prop_source, target, medium, spectrum)
+        photons = propagate_photons(setup)
 
-        println(format("Distance {:.1f} Photons: {:d} Hits: {:d}", distance, prop_source.photons, nrow(photons)))
         if nrow(photons) > 100
             break
         end
+
+        setup.sources[1] = oversample_source(prop_source, 10)
         oversample *= 10
+
     end
 
-    if isnothing(photons)
-        return nothing
-    end
+    calc_time_residual!(photons, setup)
 
-    calc_time_residual!(photons, prop_source, target, medium)
-    
     transform!(photons, :position => (p -> reduce(hcat, p)') => [:pos_x, :pos_y, :pos_z])
-    calc_total_weight!(photons, target, medium)
+    calc_total_weight!(photons, setup)
     photons[!, :total_weight] ./= oversample
     save_hdf!(
         output_fname,
@@ -173,26 +187,43 @@ function run_sims(parsed_args)
 
     n_sims = parsed_args["n_sims"]
     n_skip = parsed_args["n_skip"]
+    extended = parsed_args["extended"]
 
-    sobol = skip(
-        SobolSeq(
-            [2, log10(10), -1, 0],
-            [5, log10(150), 1, 2 * π]),
-        n_sims + n_skip)
+    if extended
+        sobol = skip(
+            SobolSeq(
+                [2, log10(10), -1, 0],
+                [5, log10(150), 1, 2 * π]),
+            n_sims + n_skip)
 
-    global_logger(TerminalLogger(right_justify=120))
 
-    @progress "Photon sims" for i in 1:n_sims
+
+        @progress "Photon sims" for i in 1:n_sims
+
+            pars = next!(sobol)
+            energy = 10^pars[1]
+            distance = Float32(10^pars[2])
+            dir_costheta = pars[3]
+            dir_phi = pars[4]
+
+            run_sim(energy, distance, dir_costheta, dir_phi, target, spectrum, medium, parsed_args["output"], extended=true)
+        end
+    else
+        sobol = skip(
+            SobolSeq([log10(10), -1], [log10(150), 1]),
+            n_sims + n_skip)
 
         pars = next!(sobol)
-        energy = 10^pars[1]
-        distance = Float32(10^pars[2])
-        dir_costheta = pars[3]
-        dir_phi = pars[4]
+        energy = 1E5
+        distance = Float32(10^pars[1])
+        dir_costheta = pars[2]
+        dir_phi = 0
 
-        run_sim(energy, distance, dir_costheta, dir_phi, target, spectrum, medium, parsed_args["output"])
+        run_sim(energy, distance, dir_costheta, dir_phi, target, spectrum, medium, parsed_args["output"], extended=false)
     end
 end
+
+global_logger(TerminalLogger(right_justify=120))
 
 s = ArgParseSettings()
 @add_arg_table s begin
@@ -209,26 +240,11 @@ s = ArgParseSettings()
     arg_type = Int
     required = false
     default = 0
+    "--extended"
+    help = "Simulate extended cascades"
+    action = :store_true
 end
 parsed_args = parse_args(ARGS, s)
 
 
 run_sims(parsed_args)
-
-#=
-
-medium = make_cascadia_medium_properties(0.99f0)
-pmt_area = Float32((75e-3 / 2)^2 * π)
-target_radius = 0.21f0
-target = MultiPMTDetector(
-    @SVector[0.0f0, 0.0f0, 0.0f0],
-    target_radius,
-    pmt_area,
-    make_pom_pmt_coordinates(Float32)
-)
-spectrum = CherenkovSpectrum((300.0f0, 800.0f0), 30, medium)
-
-
-run_sim(1E4, 15f0, 0.5, 0.3, target, spectrum, medium, "test.hd5" )
-
-#=

@@ -18,6 +18,7 @@ export cuda_propagate_multi_target!
 export cherenkov_ang_dist, cherenkov_ang_dist_int
 export make_hits_from_photons, propagate_photons, run_photon_prop
 export calc_time_residual!, calc_total_weight!
+export PhotonPropSetup
 
 using ...Utils
 using ...Types
@@ -28,6 +29,19 @@ using ..LightYield
 
 
 const c_vac_m_ns = ustrip(u"m/ns", SpeedOfLightInVacuum)
+
+mutable struct PhotonPropSetup{S<:PhotonSource,SV<:AbstractVector{S},T<:PhotonTarget,M<:MediumProperties,C<:Spectrum}
+    sources::SV
+    target::T
+    medium::M
+    spectrum::C
+end
+
+PhotonPropSetup(
+    source::PhotonSource,
+    target::PhotonTarget,
+    medium::MediumProperties,
+    spectrum::Spectrum) = PhotonPropSetup([source], target, medium, spectrum)
 
 
 """
@@ -742,7 +756,6 @@ function calculate_max_stack_size(total_mem)
 end
 
 
-
 function run_photon_prop(
     source::PhotonSource,
     target::PhotonTarget,
@@ -801,23 +814,10 @@ function run_photon_prop_no_local_cache(
 end
 
 
-function propagate_photons(
-    source::PhotonSource,
-    target::PhotonTarget,
-    medium::MediumProperties,
-    spectrum::Spectrum)
+function propagate_photons(setup::PhotonPropSetup)
 
-    return propagate_photons([source], target, medium, spectrum)
-end
-
-
-function propagate_photons(
-    sources::AbstractVector{<:PhotonSource},
-    target::PhotonTarget,
-    medium::MediumProperties,
-    spectrum::Spectrum)
-
-    positions, directions, wavelengths, dist_travelled, times, stack_idx, n_ph_sim = run_photon_prop_no_local_cache(sources, target, medium, spectrum)
+    positions, directions, wavelengths, dist_travelled, times, stack_idx, n_ph_sim = run_photon_prop_no_local_cache(
+        setup.sources, setup.target, setup.medium, setup.spectrum)
 
     stack_idx = Vector(stack_idx)[1]
     n_ph_sim = Vector(n_ph_sim)[1]
@@ -844,19 +844,15 @@ function propagate_photons(
 end
 
 
-function calc_total_weight!(
-    df::AbstractDataFrame,
-    target::PhotonTarget,
-    medium::MediumProperties,
-)
-    df[!, :area_acc] = area_acceptance.(df[:, :position], Ref(target))
+function calc_total_weight!(df::AbstractDataFrame, setup::PhotonPropSetup)
+    df[!, :area_acc] = area_acceptance.(df[:, :position], Ref(setup.target))
 
-    abs_length = absorption_length.(df[:, :wavelength], Ref(medium))
+    abs_length = absorption_length.(df[:, :wavelength], Ref(setup.medium))
     df[!, :abs_weight] = convert(Vector{Float64}, exp.(-df[:, :dist_travelled] ./ abs_length))
 
     df[!, :wl_acc] = p_one_pmt_acc.(df[:, :wavelength])
 
-    df[!, :ref_ix] = refractive_index.(df[:, :wavelength], Ref(medium))
+    df[!, :ref_ix] = refractive_index.(df[:, :wavelength], Ref(setup.medium))
 
     df[!, :total_weight] = df[:, :area_acc] .* df[:, :wl_acc] .* df[:, :abs_weight]
 
@@ -865,23 +861,18 @@ end
 
 function make_hits_from_photons(
     df::AbstractDataFrame,
-    target::PhotonTarget,
+    setup::PhotonPropSetup,
     target_orientation::AbstractMatrix{<:Real})
 
-    df[:, :pmt_id] = check_pmt_hit(df[:, :position], target, target_orientation)
+    df[:, :pmt_id] = check_pmt_hit(df[:, :position], setup.target, target_orientation)
     df = subset(df, :pmt_id => x -> x .> 0)
     df
 end
 
-function calc_time_residual!(
-    df::AbstractDataFrame,
-    source::PhotonSource,
-    target::PhotonTarget,
-    medium::MediumProperties,
-)
+function calc_time_residual!(df::AbstractDataFrame, setup::PhotonPropSetup)
     c_vac = ustrip(u"m/ns", SpeedOfLightInVacuum)
-    distance = norm(source.position .- target.position)
-    tgeo = (distance - target.radius) ./ (c_vac / refractive_index(800.0f0, medium))
+    distance = norm(setup.sources[1].position .- setup.target.position)
+    tgeo = (distance - setup.target.radius) ./ (c_vac / refractive_index(800.0f0, setup.medium))
     df[!, :tres] = (df[:, :time] .- tgeo)
 end
 

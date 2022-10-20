@@ -13,7 +13,7 @@ export AngularEmissionProfile
 export PhotonSource, PointlikeIsotropicEmitter, ExtendedCherenkovEmitter, CherenkovEmitter, PointlikeCherenkovEmitter
 export AxiconeEmitter, PencilEmitter, PointlikeTimeRangeEmitter
 export cherenkov_ang_dist, cherenkov_ang_dist_int
-export split_source
+export split_source, oversample_source
 
 using Parameters: @with_kw
 using SpecialFunctions: gamma
@@ -136,7 +136,7 @@ const LongitudinalParametersEMinus = LongitudinalParameters(alpha=2.01849, beta=
 const LongitudinalParametersEPlus = LongitudinalParameters(alpha=2.00035, beta=1.45501, b=0.63008)
 const LongitudinalParametersGamma = LongitudinalParameters(alpha=2.83923, beta=1.34031, b=0.64526)
 
-@with_kw struct LongitudinalParameterisation{T <: Real}
+@with_kw struct LongitudinalParameterisation{T<:Real}
     a::T
     b::T
     lrad::T
@@ -144,7 +144,7 @@ end
 
 JSON.lower(p::LongitudinalParameterisation) = [p.a, p.b, p.lrad]
 
-function LongitudinalParameterisation(energy::T, medium::MediumProperties, long_pars::LongitudinalParameters) where {T <:Real}
+function LongitudinalParameterisation(energy::T, medium::MediumProperties, long_pars::LongitudinalParameters) where {T<:Real}
     b = T(long_parameter_b_edep(energy, long_pars))
     a = T(long_parameter_a_edep(energy, long_pars))
 
@@ -154,7 +154,7 @@ function LongitudinalParameterisation(energy::T, medium::MediumProperties, long_
     LongitudinalParameterisation(a, b, lrad)
 end
 
-LongitudinalParameterisation(energy::T, medium::MediumProperties, ::Type{ptype}) where {T <:Real, ptype <: ParticleType} = LongitudinalParameterisation(
+LongitudinalParameterisation(energy::T, medium::MediumProperties, ::Type{ptype}) where {T<:Real,ptype<:ParticleType} = LongitudinalParameterisation(
     energy, medium, get_longitudinal_params(ptype))
 
 
@@ -207,10 +207,10 @@ function long_parameter_a_edep(
 )
     long_pars.alpha + long_pars.beta * log10(energy)
 end
-long_parameter_a_edep(energy::Real, ::Type{ptype}) where {ptype <: ParticleType} = long_parameter_a_edep(energy, get_longitudinal_params(ptype))
+long_parameter_a_edep(energy::Real, ::Type{ptype}) where {ptype<:ParticleType} = long_parameter_a_edep(energy, get_longitudinal_params(ptype))
 
 long_parameter_b_edep(::Real, long_pars::LongitudinalParameters) = long_pars.b
-long_parameter_b_edep(energy::Real, ::Type{ptype}) where {ptype <: ParticleType} = long_parameter_b_edep(energy, get_longitudinal_params(ptype))
+long_parameter_b_edep(energy::Real, ::Type{ptype}) where {ptype<:ParticleType} = long_parameter_b_edep(energy, get_longitudinal_params(ptype))
 
 
 """
@@ -243,7 +243,7 @@ function longitudinal_profile(
 end
 
 function longitudinal_profile(
-    energy, z, medium, ::Type{ptype}) where {ptype <: ParticleType}
+    energy, z, medium, ::Type{ptype}) where {ptype<:ParticleType}
     longitudinal_profile(energy, z, medium, get_longitudinal_params(ptype))
 end
 
@@ -253,7 +253,7 @@ end
 Cumulative Gamma distribution
 \$ int_0^z Gamma(a, b) \$
 """
-gamma_cdf(a, b, z) = 1. - gamma(a, b*z) / gamma(a)
+gamma_cdf(a, b, z) = 1.0 - gamma(a, b * z) / gamma(a)
 
 
 """
@@ -276,7 +276,7 @@ function integral_long_profile(energy::Real, z_low::Real, z_high::Real, medium::
     integral_long_profile(z_low, z_high, long_param)
 end
 
-function integral_long_profile(energy::Real, z_low::Real, z_high::Real, medium::MediumProperties, ::Type{ptype}) where {ptype <: ParticleType}
+function integral_long_profile(energy::Real, z_low::Real, z_high::Real, medium::MediumProperties, ::Type{ptype}) where {ptype<:ParticleType}
     integral_long_profile(energy, z_low, z_high, medium, get_longitudinal_params(ptype))
 end
 
@@ -318,7 +318,7 @@ function fractional_contrib_long!(
     z_grid,
     medium,
     ::Type{ptype},
-    output) where {ptype <: ParticleType}
+    output) where {ptype<:ParticleType}
     fractional_contrib_long!(energy, z_grid, medium, get_longitudinal_params(ptype), output)
 end
 
@@ -326,8 +326,8 @@ function fractional_contrib_long(
     energy::Real,
     z_grid::AbstractVector{T},
     medium::MediumProperties,
-    pars_or_ptype::Union{LongitudinalParameters, ptype}
-) where {T<:Real, ptype}
+    pars_or_ptype::Union{LongitudinalParameters,ptype}
+) where {T<:Real,ptype}
     output = similar(z_grid)
     fractional_contrib_long!(energy, z_grid, medium, pars_or_ptype, output)
 end
@@ -337,7 +337,7 @@ end
 function cherenkov_track_length_dev(energy::Real, track_len_params::CherenkovTrackLengthParameters)
     track_len_params.alpha_dev * energy^track_len_params.beta_dev
 end
-cherenkov_track_length_dev(energy::Real, ::Type{ptype}) where {ptype <: ParticleType} = cherenkov_track_length_dev(energy, get_track_length_params(ptype))
+cherenkov_track_length_dev(energy::Real, ::Type{ptype}) where {ptype<:ParticleType} = cherenkov_track_length_dev(energy, get_track_length_params(ptype))
 
 """
     function cherenkov_track_length(energy::Real, track_len_params::CherenkovTrackLengthParameters)
@@ -350,14 +350,14 @@ returns track length in m
 function cherenkov_track_length(energy::Real, track_len_params::CherenkovTrackLengthParameters)
     track_len_params.alpha * energy^track_len_params.beta
 end
-cherenkov_track_length(energy::Real, ::Type{ptype}) where {ptype <: ParticleType} = cherenkov_track_length(energy, get_track_length_params(ptype))
+cherenkov_track_length(energy::Real, ::Type{ptype}) where {ptype<:ParticleType} = cherenkov_track_length(energy, get_track_length_params(ptype))
 
 
 function total_lightyield(
     particle::Particle{T},
     medium::MediumProperties,
     wl_range::Tuple{T,T}
-) where {T <:Real}
+) where {T<:Real}
     total_contrib = (
         frank_tamm_norm(wl_range, wl -> refractive_index(wl, medium)) *
         cherenkov_track_length.(particle.energy, particle.type)
@@ -369,7 +369,7 @@ end
 abstract type PhotonSource{T} end
 
 
-function split_source(source::T, parts::Integer) where {T <: PhotonSource}
+function split_source(source::T, parts::Integer) where {T<:PhotonSource}
     if source.photons < parts
         error("Cannot split source. Fewer photons than parts")
     end
@@ -404,17 +404,33 @@ end
 
 abstract type CherenkovEmitter{T} <: PhotonSource{T} end
 
+"""
+    oversample_source(em::T, factor::Number) where {T <: PhotonSource}
+
+Return a new emitter of type `T` with number of photons increased by `factor`
+"""
+function oversample_source(em::T, factor::Number) where {T<:PhotonSource}
+    args = []
+    for field in fieldnames(T)
+        if field == :photons
+            push!(args, getfield(em, field) * factor)
+        else
+            push!(args, getfield(em, field))
+        end
+    end
+    return T(args...)
+end
 struct AxiconeEmitter{T} <: PhotonSource{T}
-    position::SVector{3, T}
-    direction::SVector{3, T}
+    position::SVector{3,T}
+    direction::SVector{3,T}
     time::T
     photons::Int64
     angle::T
 end
 
 struct PencilEmitter{T} <: PhotonSource{T}
-    position::SVector{3, T}
-    direction::SVector{3, T}
+    position::SVector{3,T}
+    direction::SVector{3,T}
     time::T
     photons::Int64
 end
@@ -432,9 +448,9 @@ JSON.lower(e::PointlikeIsotropicEmitter) = Dict(
     "photons" => e.photons,
 )
 
-struct PointlikeTimeRangeEmitter{T, U} <: PhotonSource{T}
+struct PointlikeTimeRangeEmitter{T,U} <: PhotonSource{T}
     position::SVector{3,T}
-    time_range::Tuple{U, U}
+    time_range::Tuple{U,U}
     photons::Int64
 end
 
@@ -456,11 +472,11 @@ end
 function ExtendedCherenkovEmitter(
     particle::Particle,
     medium::MediumProperties,
-    wl_range::Tuple{T, T};
-    oversample=1.
-    ) where {T<:Real}
+    wl_range::Tuple{T,T};
+    oversample=1.0
+) where {T<:Real}
     long_param = LongitudinalParameterisation(particle.energy, medium, particle.type)
-    photons = pois_rand(total_lightyield(particle, medium, wl_range)*oversample)
+    photons = pois_rand(total_lightyield(particle, medium, wl_range) * oversample)
 
     ExtendedCherenkovEmitter(particle.position, particle.direction, particle.time, photons, long_param)
 end
@@ -483,7 +499,7 @@ end
 function PointlikeCherenkovEmitter(
     particle::Particle,
     medium::MediumProperties,
-    wl_range::Tuple{T, T}) where {T<:Real}
+    wl_range::Tuple{T,T}) where {T<:Real}
 
     photons = pois_rand(total_lightyield(particle, medium, wl_range))
     PointlikeCherenkovEmitter(particle.position, particle.direction, particle.time, photons)
