@@ -255,7 +255,7 @@ end
 end
 
 
-
+#=
 function cuda_propagate_photons!(
     out_positions::CuDeviceVector{SVector{3,T}},
     out_directions::CuDeviceVector{SVector{3,T}},
@@ -272,7 +272,7 @@ function cuda_propagate_photons!(
     spectrum::Spectrum,
     target_pos::SVector{3,T},
     target_r::T,
-    ::Val{MediumProp}) where {T,MediumProp}
+    medium::MediumProperties{T} where {T})
 
     block = blockIdx().x
     thread = threadIdx().x
@@ -287,8 +287,6 @@ function cuda_propagate_photons!(
 
 
     this_n_photons::Int64 = cld(source.photons, (griddim * blockdim))
-
-    medium::MediumProperties{T} = MediumProp
 
     target_rsq::T = target_r^2
     # stack_len is stack_len per block
@@ -368,7 +366,7 @@ function cuda_propagate_photons!(
     return nothing
 
 end
-
+=#
 function cuda_propagate_photons_no_local_cache!(
     out_positions::CuDeviceVector{SVector{3,T}},
     out_directions::CuDeviceVector{SVector{3,T}},
@@ -384,7 +382,7 @@ function cuda_propagate_photons_no_local_cache!(
     spectrum::Spectrum,
     target_pos::SVector{3,T},
     target_r::T,
-    ::Val{MediumProp}) where {T,MediumProp}
+    medium::MediumProperties{T}) where {T}
 
     block = blockIdx().x
     thread = threadIdx().x
@@ -402,8 +400,6 @@ function cuda_propagate_photons_no_local_cache!(
     if global_thread_index <= remainder
         this_n_photons += 1
     end
-
-    medium::MediumProperties{T} = MediumProp
 
     target_rsq::T = target_r^2
 
@@ -755,7 +751,7 @@ function calculate_max_stack_size(total_mem)
     return Int64(fld(total_mem - 2 * (sizeof(Int64)), one_event))
 end
 
-
+#=
 function run_photon_prop(
     source::PhotonSource,
     target::PhotonTarget,
@@ -784,7 +780,7 @@ function run_photon_prop(
 
     return positions, directions, wavelengths, dist_travelled, times, stack_idx, n_ph_sim
 end
-
+=#
 function run_photon_prop_no_local_cache(
     sources::AbstractVector{<:PhotonSource},
     target::PhotonTarget,
@@ -799,7 +795,7 @@ function run_photon_prop_no_local_cache(
 
     kernel = @cuda launch = false PhotonPropagationCuda.cuda_propagate_photons_no_local_cache!(
         positions, directions, wavelengths, dist_travelled, times, stack_idx, n_ph_sim, err_code, Int64(0),
-        sources[1], spectrum, target.position, target.radius, Val(medium))
+        sources[1], spectrum, target.position, target.radius, medium)
 
     blocks, threads = CUDA.launch_configuration(kernel.fun)
 
@@ -807,7 +803,7 @@ function run_photon_prop_no_local_cache(
     for source in sources
         kernel(
             positions, directions, wavelengths, dist_travelled, times, stack_idx, n_ph_sim, err_code, Int64(0),
-            source, spectrum, target.position, target.radius, Val(medium); threads=threads, blocks=blocks)
+            source, spectrum, target.position, target.radius, medium; threads=threads, blocks=blocks)
     end
 
     return positions, directions, wavelengths, dist_travelled, times, stack_idx, n_ph_sim

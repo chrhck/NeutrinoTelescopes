@@ -102,6 +102,7 @@ function run_sim(
         end
 
         setup.sources[1] = oversample_source(prop_source, 10)
+        println(format("distance {:.2f} photons: {:d}", distance,  setup.sources[1].photons))
         oversample *= 10
 
     end
@@ -123,7 +124,7 @@ function run_sim(
         Sample a random rotation matrix and rotate the pmts on the module accordingly.
         =#
         orientation = rand(RotMatrix3)
-        hits = make_hits_from_photons(photons, target, orientation)
+        hits = make_hits_from_photons(photons, setup, orientation)
 
         if nrow(hits) < 10
             continue
