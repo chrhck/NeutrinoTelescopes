@@ -214,13 +214,15 @@ function run_sims(parsed_args)
             SobolSeq([log10(10), -1], [log10(150), 1]),
             n_sims + n_skip)
 
-        pars = next!(sobol)
-        energy = 1E5
-        distance = Float32(10^pars[1])
-        dir_costheta = pars[2]
-        dir_phi = 0
+        @progress "Photon sims" for i in 1:n_sims
+            pars = next!(sobol)
+            energy = 1E5
+            distance = Float32(10^pars[1])
+            dir_costheta = pars[2]
+            dir_phi = 0
 
-        run_sim(energy, distance, dir_costheta, dir_phi, target, spectrum, medium, parsed_args["output"], extended=false)
+            run_sim(energy, distance, dir_costheta, dir_phi, target, spectrum, medium, parsed_args["output"], extended=false)
+        end
     end
 end
 
