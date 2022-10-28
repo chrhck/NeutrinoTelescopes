@@ -57,37 +57,34 @@ def find_nan_root(var, fn_dict):
     iter_graph(var.grad_fn, nan_cb)
 
 
-extra_flow_defs = {
-    "g": {
-        "softplus_for_width": 1,
-        "upper_bound_for_widths": 100,
-        "lower_bound_for_widths": 0.1,
-        # "nonlinear_stretch_type": "rq_splines"
-    }
-}
+
+
+
+
+
 data = torch.load(
-    "/home/chrhck/.julia/dev/NeutrinoTelescopes/assets/models/checkpoint_7_nangrad.pt"
+    "/home/chrhck/repos/NeutrinoTelescopes/assets/models/checkpoint_3_nangrad.pt"
 )
 model_state_dict = data["model_state_dict"]
 optimizer_state_dict = data["optimizer_state_dict"]
 samples, labels = data["batch"]
-pdf = jammy_flows.pdf(
-    "e1+s2",
-    "gg+vvvvv",
-    conditional_input_dim=5,
-    hidden_mlp_dims_sub_pdfs="256",
-    options_overwrite=extra_flow_defs,
-)
+extra_flow_defs = {
+    "v": {
+        "exp_map_type": "splines",
+        #"nonlinear_stretch_type": "rq_splines"
+    }
+}
+pdf = jammy_flows.pdf("e1+s2", "gg+n", conditional_input_dim=5, hidden_mlp_dims_sub_pdfs="256", options_overwrite=extra_flow_defs)
 pdf.load_state_dict(model_state_dict)
 pdf.to("cpu")
 
 # 500
-slrange = slice(497, 499)
+slrange = slice(0, 1000)
 
 samples = samples[slrange, :].to("cpu")
 labels = labels[slrange, :].to("cpu")
 
-print(samples, labels)
+
 
 samples[1, :] = torch.ones_like(samples[1, :])
 labels[1, :] = torch.ones_like(labels[1, :])
