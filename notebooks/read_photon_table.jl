@@ -1,5 +1,6 @@
 using DataFrames
 using HDF5
+using Makie
 using GLMakie
 GLMakie.activate!()
 using SphereSurfaceHistogram
@@ -8,7 +9,7 @@ using StatsBase
 using DataStructures
 
 
-fname = joinpath(@__DIR__, "../assets/photon_table_1.hd5")
+fname = joinpath(@__DIR__, "../assets/photon_tables_extended_1.hd5")
 fid = h5open(fname, "r")
 
 
