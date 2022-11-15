@@ -4,6 +4,7 @@ using DataFrames
 using CairoMakie
 using Flux
 using Optim
+using Base.Iterators
 
 function scale_interval(x::Number, old::NTuple{2,<:Number}, new::NTuple{2,<:Number})
 
@@ -77,13 +78,19 @@ function (m::RQNormFlow)(x, cond)
 
 end
 
+
+data = Matrix(df)
+
+data_b = [data[r, :]  for r in partition(1:nrow(df), 100)]
+
+
 Flux.@functor RQNormFlow (embedding,)
 rq_layer = RQNormFlow(model, K, 5)
 loss(x) = -sum(rq_layer(x))
 
 pars = Flux.params(rq_layer)
 opt = Flux.Optimise.Adam()
-Flux.train!(loss, pars, times, opt)
+Flux.train!(loss, pars, data, opt)
 
 
 rq_layer(randn(100), randn((16, 100)))
