@@ -44,6 +44,13 @@ widths = randn(K)
 heights = randn(K)
 derivs = randn(K - 1)
 
+model = Chain(
+    Dense(16 => 512),
+    Dense(16 => 3 * K - 1)
+)
+
+
+
 rq = Bijectors.RationalQuadraticSpline(widths, heights, derivs, B)
 b = Bijectors.Scale(10) ∘ rq
 
