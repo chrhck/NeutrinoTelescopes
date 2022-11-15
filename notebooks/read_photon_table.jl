@@ -23,14 +23,14 @@ for g in fid["photons"]
         [:tres, :pos_x, :pos_y, :pos_z, :total_weight]
     )
 
-    df = df[df[:, :tres].>10, :]
+    #df = df[df[:, :tres].>10, :]
 
     w = ProbabilityWeights(df[:, :total_weight])
     n_samps = 20000
     ixs = sample(1:nrow(df), w, n_samps)
     pos = Matrix(df[ixs, [:pos_x, :pos_y, :pos_z]])
     pos = pos ./ map(norm, eachrow(pos))
-    binner = SSHBinner(500)
+    binner = SSHBinner(50)
     @inbounds for p in eachrow(pos)
         push!(binner, p)
     end
