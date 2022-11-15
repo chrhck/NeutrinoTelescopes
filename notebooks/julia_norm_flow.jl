@@ -36,7 +36,7 @@ hppmt = combine(groupby(df, :pmt_id), nrow)
 fig = Figure()
 hist(fig[1, 1], times; bins=-10:0.5:20, normalization=:pdf)
 
-base = Normal()
+
 B = 5
 K = 8
 
@@ -46,9 +46,51 @@ derivs = randn(K - 1)
 
 model = Chain(
     Dense(16 => 512),
-    Dense(16 => 3 * K - 1)
+    Dense(512 => 3 * K - 1)
 )
 
+struct RQNormFlow
+    embedding::Chain
+    K::Integer
+    B::Integer
+end
+
+function (m::RQNormFlow)(x, cond)
+    # Arbitrary code can go here, but note that everything will be differentiated.
+    # Zygote does not allow some operations, like mutating arrays.
+  
+    base = Normal()
+
+    params = m.embedding(cond)
+   
+    res = [
+        logpdf(transformed(base, Bijectors.RationalQuadraticSpline(
+            p[1:m.K],
+            p[m.K+1:2*m.K],
+            p[2*m.K+1:end],
+            m.B
+            )), ax)
+        for (p, ax) in zip(eachcol(params), x)
+    ]
+
+    return res
+
+end
+
+Flux.@functor RQNormFlow (embedding,)
+rq_layer = RQNormFlow(model, K, 5)
+loss(x) = -sum(rq_layer(x))
+
+pars = Flux.params(rq_layer)
+opt = Flux.Optimise.Adam()
+Flux.train!(loss, pars, times, opt)
+
+
+rq_layer(randn(100), randn((16, 100)))
+
+a = collect(1:3*K-1)
+
+a[2*K+1:end]
 
 
 rq = Bijectors.RationalQuadraticSpline(widths, heights, derivs, B)
