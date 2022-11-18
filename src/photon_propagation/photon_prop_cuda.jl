@@ -226,7 +226,11 @@ end
     return @SVector[CUDA.fma(step_size, dir[j], pos[j]) for j in 1:3]
 end
 
-@inline function check_intersection(pos::SVector{3,T}, dir::SVector{3,T}, target_pos::SVector{3,T}, target_rsq::T, step_size::T) where {T<:Real}
+
+@inline function check_intersection(::Spherical, target::PhotonTarget, pos::SVector{3,T}, dir::SVector{3,T}, step_size::T) where {T<:Real}
+
+    target_pos = target.pos
+    target_rsq = target.rsq
 
     dpos = pos .- target_pos
 
@@ -252,6 +256,10 @@ end
         return false, NaN32
     end
 
+end
+
+@inline function check_intersection(target::PhotonTarget, pos, dir, step_size)
+    return check_intersection(geometry_type(target), target::PhotonTarget, pos, dir, step_size)
 end
 
 
@@ -380,8 +388,7 @@ function cuda_propagate_photons_no_local_cache!(
     source::PhotonSource,
     #spectrum_texture::CuDeviceTexture{T, 1},
     spectrum::Spectrum,
-    target_pos::SVector{3,T},
-    target_r::T,
+    targets::CuDeviceVector{<:PhotonTarget},
     medium::MediumProperties{T}) where {T}
 
     block = blockIdx().x
@@ -400,8 +407,6 @@ function cuda_propagate_photons_no_local_cache!(
     if global_thread_index <= remainder
         this_n_photons += 1
     end
-
-    target_rsq::T = target_r^2
 
     n_photons_simulated = Int64(0)
 
@@ -429,7 +434,11 @@ function cuda_propagate_photons_no_local_cache!(
 
             # Check intersection with module
 
-            isec, d = check_intersection(pos, dir, target_pos, target_rsq, step_size)
+            isec = false
+            dist_to_target = 0.0f0
+            for target in targets
+                isec, dist_to_target = check_intersection(pos, dir, target, step_size)
+            end
 
             if !isec
                 pos = update_position(pos, dir, step_size)
