@@ -398,7 +398,7 @@ end
 
 
 function cuda_propagate_photons_no_local_cache_hits_struct!(
-    out_hits::CuDeviceVector{<:PhotonHit},
+    out_hits::StructArray{<:PhotonHit},
     out_stack_pointer::CuDeviceVector{Int64},
     out_n_ph_simulated::CuDeviceVector{Int64},
     out_err_code::CuDeviceVector{Int32},
