@@ -12,9 +12,10 @@ using StatsBase
 using Logging
 using PoissonRandom
 using Rotations
+using StructArrays
 
 export cuda_propagate_photons!, initialize_photon_arrays, process_output
-export cuda_propagate_multi_target!
+export cuda_propagate_multi_target!, check_intersection
 export cherenkov_ang_dist, cherenkov_ang_dist_int
 export make_hits_from_photons, propagate_photons, run_photon_prop
 export calc_time_residual!, calc_total_weight!
@@ -30,9 +31,9 @@ using ..LightYield
 
 const c_vac_m_ns = ustrip(u"m/ns", SpeedOfLightInVacuum)
 
-mutable struct PhotonPropSetup{S<:PhotonSource,SV<:AbstractVector{S},T<:PhotonTarget,M<:MediumProperties,C<:Spectrum}
+mutable struct PhotonPropSetup{SV<:AbstractVector{<:PhotonSource},ST<:AbstractVector{<:PhotonTarget},M<:MediumProperties,C<:Spectrum}
     sources::SV
-    target::T
+    targets::ST
     medium::M
     spectrum::C
 end
@@ -41,7 +42,7 @@ PhotonPropSetup(
     source::PhotonSource,
     target::PhotonTarget,
     medium::MediumProperties,
-    spectrum::Spectrum) = PhotonPropSetup([source], target, medium, spectrum)
+    spectrum::Spectrum) = PhotonPropSetup([source], [target], medium, spectrum)
 
 
 """
@@ -228,16 +229,25 @@ end
 
 
 @inline function check_intersection(::Spherical, target::PhotonTarget, pos::SVector{3,T}, dir::SVector{3,T}, step_size::T) where {T<:Real}
-
-    target_pos = target.pos
-    target_rsq = target.rsq
+    target_pos = target.position
+    target_rsq = target.radius^2
 
     dpos = pos .- target_pos
+
+    # Check if intersection is even possible
+    if any(((dpos .- target.radius) .> 0) .&& (dir .> 0))
+        return false, NaN32
+    elseif any(((dpos .+ target.radius) .< 0) .&& (dir .< 0))
+        return false, NaN32
+    end
+
 
     a::T = dot(dir, dpos)
     pp_norm_sq::T = sum(dpos .^ 2)
 
     b = CUDA.fma(a, a, -pp_norm_sq + target_rsq)
+
+    @show b
     #b::Float32 = a^2 - (pp_norm_sq - target.radius^2)
 
     isec = b >= 0
@@ -258,8 +268,8 @@ end
 
 end
 
-@inline function check_intersection(target::PhotonTarget, pos, dir, step_size)
-    return check_intersection(geometry_type(target), target::PhotonTarget, pos, dir, step_size)
+@inline function check_intersection(target::T, pos, dir, step_size) where {T<:PhotonTarget}
+    return check_intersection(geometry_type(T), target, pos, dir, step_size)
 end
 
 
@@ -375,12 +385,20 @@ function cuda_propagate_photons!(
 
 end
 =#
-function cuda_propagate_photons_no_local_cache!(
-    out_positions::CuDeviceVector{SVector{3,T}},
-    out_directions::CuDeviceVector{SVector{3,T}},
-    out_wavelengths::CuDeviceVector{T},
-    out_dist_travelled::CuDeviceVector{T},
-    out_times::CuDeviceVector{<:Real},
+
+struct PhotonHit{T<:Real,U<:Real}
+    position::SVector{3,T}
+    direction::SVector{3,T}
+    initial_direction::SVector{3,T}
+    wavelength::T
+    time::U
+    dist_travelled::T
+    module_id::UInt16
+end
+
+
+function cuda_propagate_photons_no_local_cache_hits_struct!(
+    out_hits::CuDeviceVector{<:PhotonHit},
     out_stack_pointer::CuDeviceVector{Int64},
     out_n_ph_simulated::CuDeviceVector{Int64},
     out_err_code::CuDeviceVector{Int32},
@@ -436,9 +454,118 @@ function cuda_propagate_photons_no_local_cache!(
 
             isec = false
             dist_to_target = 0.0f0
+            module_id::UInt16 = 0
             for target in targets
-                isec, dist_to_target = check_intersection(pos, dir, target, step_size)
+                isec, dist_to_target = check_intersection(target, pos, dir, step_size)
+
+                if isec
+                    module_id = target.module_id
+                    break
+                end
             end
+
+            if !isec
+                pos = update_position(pos, dir, step_size)
+                dist_travelled += step_size
+                time += step_size / c_grp
+                dir = update_direction(dir, medium)
+                continue
+            end
+
+            # Intersected
+            pos = update_position(pos, dir, d)
+            dist_travelled += d
+            time += d / c_grp
+
+            stack_idx::Int64 = CUDA.atomic_add!(pointer(out_stack_pointer, 1), Int64(1))
+            CUDA.@cuassert stack_idx <= length(out_positions) "Stack overflow"
+
+            out_hits[stack_idx] = PhotonHit(
+                pos,
+                dir,
+                initial_dir,
+                wavelength,
+                time,
+                dist_travelled,
+                module_id)
+            break
+        end
+
+        n_photons_simulated += 1
+
+    end
+
+    CUDA.atomic_add!(pointer(out_n_ph_simulated, 1), n_photons_simulated)
+    out_err_code[1] = 0
+
+    return nothing
+
+end
+
+
+function cuda_propagate_photons_no_local_cache!(
+    out_positions::CuDeviceVector{SVector{3,T}},
+    out_directions::CuDeviceVector{SVector{3,T}},
+    out_wavelengths::CuDeviceVector{T},
+    out_dist_travelled::CuDeviceVector{T},
+    out_times::CuDeviceVector{<:Real},
+    out_stack_pointer::CuDeviceVector{Int64},
+    out_n_ph_simulated::CuDeviceVector{Int64},
+    out_err_code::CuDeviceVector{Int32},
+    seed::Int64,
+    source::PhotonSource,
+    #spectrum_texture::CuDeviceTexture{T, 1},
+    spectrum::Spectrum,
+    target::PhotonTarget,
+    medium::MediumProperties{T}) where {T}
+
+    block = blockIdx().x
+    thread = threadIdx().x
+    blockdim = blockDim().x
+    griddim = gridDim().x
+    # warpsize = CUDA.warpsize()
+    # warp_ix = thread % warp
+    n_threads_total = (griddim * blockdim)
+    global_thread_index::Int32 = (block - Int32(1)) * blockdim + thread
+
+    Random.seed!(seed + global_thread_index)
+
+    this_n_photons, remainder = divrem(source.photons, n_threads_total)
+
+    if global_thread_index <= remainder
+        this_n_photons += 1
+    end
+
+    n_photons_simulated = Int64(0)
+
+    @inbounds for i in 1:this_n_photons
+
+        photon_state = initialize_photon_state(source, medium, spectrum)
+
+        dir::SVector{3,T} = photon_state.direction
+        initial_dir = copy(dir)
+        wavelength::T = photon_state.wavelength
+        pos::SVector{3,T} = photon_state.position
+
+        time = photon_state.time
+        dist_travelled = T(0)
+
+        sca_len::T = scattering_length(wavelength, medium)
+        c_grp::T = group_velocity(wavelength, medium)
+
+
+        steps::Int32 = 15
+        for nstep in Int32(1):steps
+
+            eta = rand(T)
+            step_size::Float32 = -CUDA.log(eta) * sca_len
+
+            # Check intersection with module
+
+            isec = false
+            dist_to_target = 0.0f0
+
+            isec, dist_to_target = check_intersection(target, pos, dir, step_size)
 
             if !isec
                 pos = update_position(pos, dir, step_size)
@@ -755,8 +882,8 @@ function calculate_max_stack_size(total_mem, blocks)
     return convert(Int32, floor((total_mem - sizeof(Int64) - sizeof(Int32) * blocks) / (sizeof(SVector{3,Float32}) * 2 * blocks + sizeof(Float32) * 3 * blocks)))
 end
 
-function calculate_max_stack_size(total_mem)
-    one_event = sizeof(SVector{3,Float32}) * 2 + sizeof(Float32) * 3
+function calculate_max_stack_size(total_mem, pos_type, time_type)
+    one_event = sizeof(PhotonHit{pos_type,time_type})
     return Int64(fld(total_mem - 2 * (sizeof(Int64)), one_event))
 end
 
@@ -790,6 +917,43 @@ function run_photon_prop(
     return positions, directions, wavelengths, dist_travelled, times, stack_idx, n_ph_sim
 end
 =#
+
+
+
+
+function run_photon_prop_no_local_cache_multi_target(
+    sources::AbstractVector{<:PhotonSource},
+    targets::AbstractVector{<:PhotonTarget},
+    medium::MediumProperties,
+    spectrum::Spectrum;
+    time_type::Type=Float32)
+    avail_mem = CUDA.totalmem(collect(CUDA.devices())[1])
+    max_total_stack_len = calculate_max_stack_size(0.7 * avail_mem, Float32, time_type)
+
+
+    photon_hits = CuVector{PhotonHit{Float32,time_type}}(undef, max_total_stack_len)
+    stack_idx = CuVector(ones(Int64, 1))
+    n_ph_sim = CuVector(zeros(Int64, 1))
+    err_code = CuVector(zeros(Int32, 1))
+
+    kernel = @cuda launch = false cuda_propagate_photons_no_local_cache_hits_struct!(
+        photon_hits, stack_idx, n_ph_sim, err_code, Int64(0),
+        sources[1], spectrum, targets, medium)
+
+    blocks, threads = CUDA.launch_configuration(kernel.fun)
+
+    # Can assign photons to sources by keeping track of stack_idx for each source
+    for source in sources
+        kernel(
+            photon_hits, stack_idx, n_ph_sim, err_code, Int64(0),
+            source, spectrum, targets, medium; threads=threads, blocks=blocks)
+    end
+
+    return photon_hits, stack_idx, n_ph_sim
+end
+
+
+
 function run_photon_prop_no_local_cache(
     sources::AbstractVector{<:PhotonSource},
     target::PhotonTarget,
@@ -804,7 +968,7 @@ function run_photon_prop_no_local_cache(
 
     kernel = @cuda launch = false PhotonPropagationCuda.cuda_propagate_photons_no_local_cache!(
         positions, directions, wavelengths, dist_travelled, times, stack_idx, n_ph_sim, err_code, Int64(0),
-        sources[1], spectrum, target.position, target.radius, medium)
+        sources[1], spectrum, target, medium)
 
     blocks, threads = CUDA.launch_configuration(kernel.fun)
 
@@ -819,7 +983,50 @@ function run_photon_prop_no_local_cache(
 end
 
 
+
 function propagate_photons(setup::PhotonPropSetup)
+
+    hits, stack_idx, n_ph_sim = run_photon_prop_no_local_cache_multi_target(
+        setup.sources, setup.targets, setup.medium, setup.spectrum)
+
+    stack_idx = Vector(stack_idx)[1]
+    n_ph_sim = Vector(n_ph_sim)[1]
+
+    if stack_idx == 0
+        return DataFrame(), n_ph_sim
+    end
+
+    positions = Vector{SVector{3, Float32}}(undef, stack_idx)
+    directions = Vector{SVector{3, Float32}}(undef, stack_idx)
+    directions_init = Vector{SVector{3, Float32}}(undef, stack_idx)
+    wavelengths = Vector{Float32}(undef, stack_idx)
+    dist_travelled = Vector{Float32}(undef, stack_idx)
+    times = Vector{Float32}(undef, stack_idx)
+
+    for i in 1:stack_idx
+        positions[i] = hits[i].
+
+
+
+    positions = process_output(positions, stack_idx)
+    dist_travelled = process_output(dist_travelled, stack_idx)
+    wavelengths = process_output(wavelengths, stack_idx)
+    directions = process_output(directions, stack_idx)
+    times = process_output(times, stack_idx)
+
+
+    df = DataFrame(
+        position=positions,
+        direction=directions,
+        wavelength=wavelengths,
+        dist_travelled=dist_travelled,
+        time=times)
+
+    return df
+end
+
+
+function propagate_photons_single_target(setup::PhotonPropSetup)
 
     positions, directions, wavelengths, dist_travelled, times, stack_idx, n_ph_sim = run_photon_prop_no_local_cache(
         setup.sources, setup.target, setup.medium, setup.spectrum)

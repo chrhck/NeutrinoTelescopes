@@ -31,6 +31,7 @@ struct DetectionSphere{T<:Real} <: PhotonTarget
     radius::T
     n_pmts::Int64
     pmt_area::T
+    module_id::UInt16
 end
 geometry_type(::Type{<:DetectionSphere}) = Spherical()
 
@@ -40,6 +41,7 @@ struct MultiPMTDetector{T<:Real,N,L} <: PixelatedTarget
     radius::T
     pmt_area::T
     pmt_coordinates::SMatrix{2,N,T,L}
+    module_id::UInt16
 end
 geometry_type(::Type{<:MultiPMTDetector}) = Spherical()
 

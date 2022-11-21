@@ -11,11 +11,38 @@ using DataStructures
     @testset "LightYield" begin
         @testset "Sources" begin
             src = PointlikeTimeRangeEmitter(
-                @SVector[0.0f0, 0f0, 0.7f0],
-                (0f0, Float32(1E6)),
+                @SVector[0.0f0, 0.0f0, 0.7f0],
+                (0.0f0, Float32(1E6)),
                 Int64(1E10)
             )
             @test src.photons == sum([s.photons for s in split_source(src, 1005)])
+        end
+    end
+
+    @testset "PhotonProp" begin
+        @testset "Intersections" begin
+            target = DetectionSphere(
+                @SVector[10.0f0, 11.0f0, 12.0f0],
+                0.5f0,
+                1,
+                1.0f0)
+
+            pos = @SVector[10.0f0, 11.0f0, 14.0f0]
+            dir = @SVector[0.0f0, 0.0f0, 1.0f0]
+            @test !check_intersection(target, pos, dir, 10.0f0)[1]
+
+            dir = @SVector[0.0f0, 0.0f0, -1.0f0]
+            @test check_intersection(target, pos, dir, 10.0f0)[1]
+
+            dir = @SVector[0.0f0, 0.0f0, -1.0f0]
+            @test !check_intersection(target, pos, dir, 0.1f0)[1]
+
+            pos = @SVector[9.0f0, 10.0f0, 11.0f0]
+            dir = [1.0f0, 1.0f0, 1.0f0]
+            dir = SVector{3}(dir ./ norm(dir))
+            @test check_intersection(target, pos, dir, 10.0f0)[1]
+
+
         end
     end
 
@@ -23,24 +50,25 @@ using DataStructures
 
         @testset "Rotations" begin
 
-            e_z = SA[0., 0., 1.]
-            e_x = SA[1., 0., 0.]
-            e_y = SA[0., 1., 0.]
+            e_z = SA[0.0, 0.0, 1.0]
+            e_x = SA[1.0, 0.0, 0.0]
+            e_y = SA[0.0, 1.0, 0.0]
             # Test that applying the rotation to the first vector yields the second vector
-            let theta=0.2, phi=1.4
+            let theta = 0.2, phi = 1.4
                 dir = sph_to_cart(theta, phi)
                 @test all(isapprox.(apply_rot(dir, e_z, dir), e_z; atol=1E-9))
             end
 
-            let θ_1=π/2, θ_2=π/2, ϕ_1=0, ϕ_2=π/4
+            let θ_1 = π / 2, θ_2 = π / 2, ϕ_1 = 0, ϕ_2 = π / 4
                 # Rotation by 45° around z
                 dir_1 = sph_to_cart(θ_1, ϕ_1)
                 dir_2 = sph_to_cart(θ_2, ϕ_2)
                 @test all(isapprox.(apply_rot(dir_1, dir_2, e_x), SA[1/sqrt(2), 1/sqrt(2), 0]; atol=1E-9))
             end
 
-            let θ_1=0.2, θ_2=1.3, ϕ_1=1.8, ϕ_2=2.5,
+            let θ_1 = 0.2, θ_2 = 1.3, ϕ_1 = 1.8, ϕ_2 = 2.5,
                 dir_1 = sph_to_cart(θ_1, ϕ_1)
+
                 dir_2 = sph_to_cart(θ_2, ϕ_2)
                 @test all(apply_rot(dir_1, e_z, dir_2) .≈ rot_to_ez_fast(dir_1, dir_2))
                 @test all(apply_rot(e_z, dir_1, dir_2) .≈ rot_from_ez_fast(dir_1, dir_2))
@@ -53,11 +81,11 @@ using DataStructures
         end
 
         @testset "integrate_gauss_quad" begin
-            let f = x->x^3
-                @test integrate_gauss_quad(f, 0., 1.) ≈ 1/4
+            let f = x -> x^3
+                @test integrate_gauss_quad(f, 0.0, 1.0) ≈ 1 / 4
             end
 
-            let f = cos, a=0., b=0.5
+            let f = cos, a = 0.0, b = 0.5
                 @test integrate_gauss_quad(f, a, b) ≈ sin(b) - sin(a)
             end
 
@@ -87,7 +115,7 @@ using DataStructures
 
         @testset "cart_to_sph" begin
 
-            let theta = 0.3, phi=1.5
+            let theta = 0.3, phi = 1.5
                 @test all(cart_to_sph(sph_to_cart(theta, phi)) .≈ (theta, phi))
             end
 
