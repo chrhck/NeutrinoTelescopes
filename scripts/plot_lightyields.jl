@@ -1,12 +1,25 @@
 using Plots
-using Traceur
 using NeutrinoTelescopes
 using StaticArrays
-
+using CSV
+using DataFrames
 
 log_energies = 2:0.1:8
 zs = (0:0.1:20.0)# m
 medium = make_cascadia_medium_properties(0.99)
+wls = 200:1.:800
+
+p = plot(wls, frank_tamm.(wls, refractive_index.(wls, Ref(medium))) .* 1E9,
+     xlabel="Wavelength (nm)", ylabel="Photons / (nm ⋅ m)",  dpi=150, xlim=(200, 800),
+    )
+
+water_abs = DataFrame(CSV.File(joinpath(@__DIR__, "../assets/water_absorption_wiki.csv");
+               header=[:x, :y], delim=";", decimal=',', type=Float64))
+p = plot!(twinx(p), water_abs[:, :x], 1 ./water_abs[:, :y], color=:red,xticks=:none,
+    yscale=:log10, ylabel="Absorption length (m)", label="Absorption", ylim=(1E-3, 1E2))
+
+savefig(p, joinpath(@__DIR__, "../figures/ch_spectrum.png"))
+
 
 # Plot longitudinal profile
 plot(zs, longitudinal_profile.(Ref(1E3), zs, Ref(medium), Ref(PEMinus)), label="1E3 GeV",
@@ -34,8 +47,9 @@ plot(log_energies, tlens, yscale=:log10, xlabel="Log10(E/GeV)", ylabel="Cherenko
 
 total_lys = frank_tamm_norm((200.0, 800.0), wl -> refractive_index(wl, medium)) * tlens
 
-plot(log_energies, total_lys, yscale=:log10, ylabel="Number of photons", xlabel="log10(Energy/GeV)")
-
+p = plot(log_energies, total_lys, yscale=:log10, ylabel="Number of photons", xlabel="log10(Energy/GeV)",
+label="", dpi=150)
+savefig(p, joinpath(@__DIR__, "../figures/photons_per_energy.png"))
 
 nodes = 5:100
 
