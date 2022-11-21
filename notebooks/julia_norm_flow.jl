@@ -10,8 +10,12 @@ using TableTransforms
 using MLUtils
 using NNlib
 using ProgressLogging
+using CUDA
+using BenchmarkTools
+using Random
+using CategoricalArrays
 
-device = cpu
+addevice = cpu
 
 
 function scale_interval(x::Number, old::NTuple{2,<:Number}, new::NTuple{2,<:Number})
@@ -31,25 +35,37 @@ function scale_interval(
 end
 
 
-fname = joinpath(@__DIR__, "../assets/photon_tables_extended_1.hd5")
+fname = joinpath(@__DIR__, "../assets/photon_table_extended_2.hd5")
 fid = h5open(fname, "r")
-g = fid["pmt_hits/dataset_600"]
-attrs(g)
 
-df = DataFrame(g[:, :], [:tres, :pmt_id])
-pmt = 8
-times = df[df.pmt_id.==pmt, :tres]
 
-hppmt = combine(groupby(df, :pmt_id), nrow)
 
-fig = Figure()
-hist(fig[1, 1], times; bins=-10:0.5:20, normalization=:pdf)
+datasets = shuffle(keys(fid["pmt_hits"]))
+nsel = 500
 
+
+all_hits = []
+for grpn in datasets[1:nsel]
+    grp = fid["pmt_hits"][grpn]
+    hits = DataFrame(grp[:, :], [:tres, :pmt_id])
+    labels = attrs(grp)
+    for (k, v) in attrs(grp)
+        hits[!, k] .= v
+    end
+    push!(all_hits, hits)
+end
+
+data_df = vcat(all_hits...)
+data_df[!, :pmt_id] = categorical(data_df[:, :pmt_id], levels=1:16)
+data_df = data_df |> OneHot(:pmt_id)
+
+data_df[!, :log_distance] = log.(data_df[:, :distance])
+data_df[!, :log_energy] = log.(data_df[:, :energy])
+data_df
 
 
 struct RQNormFlow
     embedding::Chain
-    sigma::Float64
     K::Integer
     B::Integer
 end
@@ -68,26 +84,6 @@ function RQNormFlow(K, B, hidden_structure)
     return RQNormFlow(Chain(model...), K, B)
 end
 
-bv = Bijectors.RationalQuadraticSpline(randn(2, K), randn(2, K), randn(2, K - 1), 5)
-ibv = inverse(bv)
-
-with_logabsdet_jacobian(ibv, [1.0, 1.0])
-
-bv.widths
-
-function test(a, b)
-    @show typeof(a), typeof(b)
-end
-
-test.(bv.widths, ones(2, 1))
-
-
-Bijectors.rqs_logabsdetjac.(bv.widths, bv.heights, bv.derivatives, [1, 1])
-
-
-bv()
-
-
 
 function (m::RQNormFlow)(x, cond)
     # Arbitrary code can go here, but note that everything will be differentiated.
@@ -95,16 +91,8 @@ function (m::RQNormFlow)(x, cond)
 
     base = Normal()
     params = m.embedding(Float64.(cond))
-
-    rqs_forward(b.widths, b.heights, b.derivatives, x)
-
-
-    x, logjac = with_logabsdet_jacobian(inverse(td.transform), y)
-    return logpdf(td.dist, x) + logjac
-
-
-
-    res = @inbounds [
+    
+    res = CUDA.@allowscalar @inbounds [
         logpdf(
             transformed(
                 base,
@@ -144,8 +132,14 @@ end
 B = 5
 K = 10
 
-times = df[:, :tres]
-pmt = onehotbatch(df[:, :pmt_id], 1:16)
+device = cpu
+
+feat_labels = []
+
+data = DataLoader(
+    data=data_df[:, :tres],
+    labe
+)
 
 data = DataLoader(
     (data=times |> device, label=pmt |> device),
@@ -153,10 +147,9 @@ data = DataLoader(
     shuffle=true)
 rq_layer = RQNormFlow(K, B, [256, 256]) |> device
 
-length(data)
 
 loss(x) = -sum(rq_layer(x[:data], x[:label]))
-loss(first(data))
+@benchmark $loss($first($data))
 
 
 pars = Flux.params(rq_layer)
