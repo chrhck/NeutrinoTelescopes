@@ -10,6 +10,6 @@ using Reexport
 @reexport using .PulseTemplates
 @reexport using .Waveforms
 @reexport using .SPETemplates
-@reexport using .Pipeline
+@reexport using .PMTPipeline
 
 end

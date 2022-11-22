@@ -1,4 +1,4 @@
-module Pipeline
+module PMTPipeline
 
 using DataFrames
 using DSP

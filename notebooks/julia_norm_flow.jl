@@ -5,64 +5,72 @@ using CairoMakie
 using Flux
 using Optim
 using Base.Iterators
-using OneHotArrays
-using TableTransforms
-using MLUtils
 using NNlib
 using ProgressLogging
+using MLUtils
 using CUDA
 using BenchmarkTools
 using Random
 using CategoricalArrays
+using AutoMLPipeline
+using NeutrinoTelescopes
+using TensorBoardLogger
+using Logging
 
-addevice = cpu
 
-
-function scale_interval(x::Number, old::NTuple{2,<:Number}, new::NTuple{2,<:Number})
-
-    a = (new[2] - new[1]) / (old[2] - old[1])
-    b = new[2] - a * old[2]
-
-    return a * x + b
-end
-
-function scale_interval(
-    x::AbstractVector{<:Number},
-    old::NTuple{2,<:Number},
-    new::NTuple{2,<:Number})
-
-    return scale_interval.(x, Ref(old), Ref(new))
-end
+device = cpu
 
 
 fname = joinpath(@__DIR__, "../assets/photon_table_extended_2.hd5")
 fid = h5open(fname, "r")
 
-
-
-datasets = shuffle(keys(fid["pmt_hits"]))
+rng = MersenneTwister(31338)
+datasets = shuffle(rng, keys(fid["pmt_hits"]))
 nsel = 500
+
+function create_pmt_table(grp)
+    hits = DataFrame(grp[:, :], [:tres, :pmt_id])
+    for (k, v) in attrs(grp)
+        hits[!, k] .= v
+    end
+    return hits
+end
 
 
 all_hits = []
 for grpn in datasets[1:nsel]
     grp = fid["pmt_hits"][grpn]
-    hits = DataFrame(grp[:, :], [:tres, :pmt_id])
-    labels = attrs(grp)
-    for (k, v) in attrs(grp)
-        hits[!, k] .= v
-    end
+    hits = create_pmt_table(grp)
     push!(all_hits, hits)
 end
 
-data_df = vcat(all_hits...)
-data_df[!, :pmt_id] = categorical(data_df[:, :pmt_id], levels=1:16)
-data_df = data_df |> OneHot(:pmt_id)
 
-data_df[!, :log_distance] = log.(data_df[:, :distance])
-data_df[!, :log_energy] = log.(data_df[:, :energy])
-data_df
+function preproc(df)
+    tres = df[:, :tres]
 
+    df[!, :pmt_id] = categorical(df[:, :pmt_id], levels=1:16)
+    df[!, :log_distance] = log.(df[:, :distance])
+    df[!, :log_energy] = log.(df[:, :energy])
+    dir_cart = DataFrame(reduce(hcat, sph_to_cart.(df[:, :dir_theta], df[:, :dir_phi]))', [:dir_x, :dir_y, :dir_z])
+    pos_cart = DataFrame(reduce(hcat, sph_to_cart.(df[:, :pos_theta], df[:, :pos_phi]))', [:pos_x, :pos_y, :pos_z])
+
+    feat = [:pmt_id, :log_distance, :log_energy]
+    cond_labels = hcat(df[:, feat], dir_cart, pos_cart)
+    return tres, cond_labels
+end
+
+
+tres, cond_labels = preproc(reduce(vcat, all_hits))
+
+extrema(tres)
+
+catf = CatFeatureSelector()
+ohe = OneHotEncoder()
+norm = SKPreprocessor("Normalizer")
+numf = NumFeatureSelector()
+
+traf = @pipeline (numf |> norm) + (catf |> ohe)
+tr_cond_labels = fit_transform!(traf, cond_labels) |> Matrix |> adjoint
 
 struct RQNormFlow
     embedding::Chain
@@ -75,7 +83,7 @@ Flux.@functor RQNormFlow (embedding,)
 function RQNormFlow(K, B, hidden_structure)
 
     model = []
-    push!(model, Dense(16 => hidden_structure[1], relu))
+    push!(model, Dense(24 => hidden_structure[1], relu))
     for ix in 2:length(hidden_structure)
         push!(model, Dense(hidden_structure[ix-1] => hidden_structure[ix], relu))
     end
@@ -96,7 +104,8 @@ function (m::RQNormFlow)(x, cond)
         logpdf(
             transformed(
                 base,
-                Bijectors.Scale(sigmoid(p[end]) * 50) ∘ Bijectors.RationalQuadraticSpline(
+                Bijectors.Scale(sigmoid(p[end]) * 50) ∘ 
+                Bijectors.RationalQuadraticSpline(
                     p[1:m.K],
                     p[m.K+1:2*m.K],
                     p[2*m.K+1:end-1],
@@ -110,7 +119,7 @@ function (m::RQNormFlow)(x, cond)
 
 end
 
-function train_model!(loss, data, pars, epochs)
+function train_model!(loss, data, pars, epochs, logger)
     local train_loss
     @progress for epoch in 1:epochs
         total_loss = 0
@@ -120,9 +129,15 @@ function train_model!(loss, data, pars, epochs)
                 return train_loss
             end
             total_loss += train_loss
+            with_logger(logger) do
+                @info "train" batch_loss=train_loss
+            end
             Flux.update!(opt, pars, gs)
         end
         total_loss /= length(data)
+        with_logger(logger) do
+            @info "train" loss=total_loss
+        end
         println("Epoch: $epoch, Loss: $total_loss")
 
     end
@@ -130,39 +145,78 @@ end
 
 
 B = 5
-K = 10
+K = 15
+
+
 
 device = cpu
 
-feat_labels = []
+size(tres)
+size(tr_cond_labels)
+
 
 data = DataLoader(
-    data=data_df[:, :tres],
-    labe
-)
-
-data = DataLoader(
-    (data=times |> device, label=pmt |> device),
-    batchsize=50,
-    shuffle=true)
-rq_layer = RQNormFlow(K, B, [256, 256]) |> device
+    (tres=tres |> device, label=tr_cond_labels |> device),
+    batchsize=5000,
+    shuffle=true,
+    rng=rng)
+rq_layer = RQNormFlow(K, B, [512, 512]) |> device
 
 
-loss(x) = -sum(rq_layer(x[:data], x[:label]))
-@benchmark $loss($first($data))
-
+loss(x) = -sum(rq_layer(x[:tres], x[:label]))
 
 pars = Flux.params(rq_layer)
 opt = Flux.Optimise.Adam(0.001)
-epochs = 100
+epochs = 10
+
+lg = TBLogger("tensorboard_logs/run", tb_overwrite)
 
 
-train_model!(loss, data, pars, epochs)
+train_model!(loss, data, pars, epochs, lg)
 
-pmt_plot = 11
-t_plot = -5:0.1:20
-l_plot = onehotbatch(fill(pmt_plot, length(t_plot)), 1:16)
+plot_tres, plot_labels = preproc(create_pmt_table(fid["pmt_hits"]["dataset_800"]))
+
+
+combine(groupby(plot_labels, :pmt_id), nrow => :n)
+
+
+pmt_plot = 12
+mask = plot_labels.pmt_id.==pmt_plot
+
+plot_tres_m = plot_tres[mask]
+plot_labels_m = plot_labels[mask, :]
+
+plot_labels_m_tf = AutoMLPipeline.transform(traf, plot_labels_m)
+
+t_plot = -5:0.1:50
+l_plot = repeat(Vector(plot_labels_m_tf[1, :]), 1, length(t_plot))
+
 fig = Figure()
+
+lines(fig[1, 1], t_plot, exp.(rq_layer(t_plot, l_plot)))
+
+hist!(fig[1, 1], plot_tres[mask], bins=-5:0.5:50, normalization=:pdf)
+fig
+
+
+
+
+
+
+
+hist!(fig[1, 1], df[df.pmt_id.==pmt_plot, :tres], bins=-5:0.5:50, normalization=:pdf)
+
+plot_labels
+
+tr_cond_labels
+
+
+
+
+
+
+l_plot = onehotbatch(fill(pmt_plot, length(t_plot)), 1:16)
+
 lines(fig[1, 1], t_plot, exp.(rq_layer(t_plot, l_plot)))
 hist!(fig[1, 1], df[df.pmt_id.==pmt_plot, :tres], bins=-5:0.5:50, normalization=:pdf)
 

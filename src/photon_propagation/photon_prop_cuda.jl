@@ -1004,7 +1004,8 @@ function propagate_photons(setup::PhotonPropSetup)
     times = Vector{Float32}(undef, stack_idx)
 
     for i in 1:stack_idx
-        positions[i] = hits[i].
+        positions[i] = hits[i]
+    end
 
 
 
