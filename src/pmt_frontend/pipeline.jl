@@ -4,8 +4,8 @@ using DataFrames
 using DSP
 using PoissonRandom
 using Distributions
-import Base:@kwdef
-import Pipe:@pipe
+import Base: @kwdef
+import Pipe: @pipe
 using PhysicalConstants.CODATA2018
 using Unitful
 using StatsBase
@@ -35,11 +35,11 @@ function calc_gamma_shape_mean_fwhm(mean, target_fwhm)
         fwhm(tt_dist, mode(tt_dist); xlims=(0, 100)) - target_fwhm
     end
 
-    find_zero(_optim, [0.1*target_fwhm^2/mean, 10*target_fwhm^2/mean], A42())
+    find_zero(_optim, [0.1 * target_fwhm^2 / mean, 10 * target_fwhm^2 / mean], A42())
 end
 
 
-@kwdef struct PMTConfig{ T<:Real, S <: SPEDistribution{T}, P<:PulseTemplate, U<:PulseTemplate, V<:UnivariateDistribution}
+@kwdef struct PMTConfig{T<:Real,S<:SPEDistribution{T},P<:PulseTemplate,U<:PulseTemplate,V<:UnivariateDistribution}
     spe_template::S
     pulse_model::P
     pulse_model_filt::U
@@ -48,7 +48,7 @@ end
     unf_pulse_res::T # ns
     adc_freq::T # Ghz
     tt_dist::V
-    lp_filter::ZeroPoleGain{:z, ComplexF64, ComplexF64, Float64}
+    lp_filter::ZeroPoleGain{:z,ComplexF64,ComplexF64,Float64}
 
 end
 
@@ -57,7 +57,7 @@ function PMTConfig(st::SPEDistribution, pm::PulseTemplate, snr_db::Real, samplin
     mode = get_template_mode(pm)
     designmethod = Butterworth(1)
     lp_filter = digitalfilter(Lowpass(lp_cutoff, fs=sampling_freq), designmethod)
-    filtered_pulse = make_filtered_pulse(pm, sampling_freq, (-10.0, 50.), lp_filter)
+    filtered_pulse = make_filtered_pulse(pm, sampling_freq, (-10.0, 50.0), lp_filter)
 
     tt_theta = calc_gamma_shape_mean_fwhm(tt_mean, tt_fwhm)
     tt_alpha = tt_mean / tt_theta
@@ -71,8 +71,8 @@ end
 STD_PMT_CONFIG = PMTConfig(
     ExponTruncNormalSPE(expon_rate=1.0, norm_sigma=0.3, norm_mu=1.0, trunc_low=0.0, peak_to_valley=3.1),
     PDFPulseTemplate(
-        dist=truncated(Gumbel(0, gumbel_width_from_fwhm(5.0))+4, 0, 20),
-        amplitude=1. #ustrip(u"A", 5E6 * ElementaryCharge / 20u"ns")
+        dist=truncated(Gumbel(0, gumbel_width_from_fwhm(5.0)) + 4, 0, 20),
+        amplitude=1.0 #ustrip(u"A", 5E6 * ElementaryCharge / 20u"ns")
     ),
     20,
     2.0,
@@ -83,7 +83,7 @@ STD_PMT_CONFIG = PMTConfig(
     1.5 # TT FWHM
 )
 
-function resample_simulation(hit_times, total_weights, downsample=1.)
+function resample_simulation(hit_times, total_weights, downsample=1.0)
     wsum = sum(total_weights)
 
     mask = total_weights .> 0
@@ -91,7 +91,7 @@ function resample_simulation(hit_times, total_weights, downsample=1.)
     total_weights = total_weights[mask]
 
     norm_weights = ProbabilityWeights(copy(total_weights), wsum)
-    nhits = min(pois_rand(wsum*downsample), length(hit_times))
+    nhits = min(pois_rand(wsum * downsample), length(hit_times))
     try
         sample(hit_times, norm_weights, nhits; replace=false)
     catch e
@@ -101,18 +101,18 @@ function resample_simulation(hit_times, total_weights, downsample=1.)
 end
 
 
-function resample_simulation(df::AbstractDataFrame; downsample=1., per_pmt=true, time_col=:time)
+function resample_simulation(df::AbstractDataFrame; downsample=1.0, per_pmt=true, time_col=:time)
 
 
     wrapped(hit_times, total_weights) = resample_simulation(hit_times, total_weights, downsample)
 
     if per_pmt
-        groups = groupby(df, :pmt_id)
-        resampled_hits = combine(groups, [time_col, :total_weight] => wrapped => time_col)
+        groups = groupby(df, [:pmt_id, :module_id])
     else
-        resampled_hits = combine(df, [time_col, :total_weight] => wrapped => time_col)
+        groups = groupby(df, :module_id)
     end
-    resampled_hits
+    resampled_hits = combine(groups, [time_col, :total_weight] => wrapped => time_col)
+    return resampled_hits
 end
 
 
@@ -143,20 +143,20 @@ end
 
 
 
-function make_reco_pulses(results::AbstractDataFrame , pmt_config::PMTConfig=STD_PMT_CONFIG)
+function make_reco_pulses(results::AbstractDataFrame, pmt_config::PMTConfig=STD_PMT_CONFIG)
     @pipe results |>
-      resample_simulation |>
-      apply_tt!(_, pmt_config.tt_dist) |>
-      subtract_mean_tt!(_, pmt_config.tt_dist) |>
-      PulseSeries(_, pmt_config.spe_template, pmt_config.pulse_model) |>
-      digitize_waveform(
-        _,
-        pmt_config.sampling_freq,
-        pmt_config.adc_freq,
-        pmt_config.noise_amp,
-        pmt_config.lp_filter
-      ) |>
-      unfold_waveform(_, pmt_config.pulse_model_filt, pmt_config.unf_pulse_res, 0.2, :fnnls)
+          resample_simulation |>
+          apply_tt!(_, pmt_config.tt_dist) |>
+          subtract_mean_tt!(_, pmt_config.tt_dist) |>
+          PulseSeries(_, pmt_config.spe_template, pmt_config.pulse_model) |>
+          digitize_waveform(
+              _,
+              pmt_config.sampling_freq,
+              pmt_config.adc_freq,
+              pmt_config.noise_amp,
+              pmt_config.lp_filter
+          ) |>
+          unfold_waveform(_, pmt_config.pulse_model_filt, pmt_config.unf_pulse_res, 0.2, :fnnls)
 end
 
 function plot_hits(target, groups...; ylabel="", title="")
@@ -166,22 +166,22 @@ function plot_hits(target, groups...; ylabel="", title="")
     coords = rad2deg.(target.pmt_coordinates)
 
     for (i, (theta, phi)) in enumerate(eachcol(coords))
-        p = plot(title=format("θ={:.2f}, ϕ={:.2f}", theta, phi), titlefontsize=8, )
+        p = plot(title=format("θ={:.2f}, ϕ={:.2f}", theta, phi), titlefontsize=8,)
 
         for grp in groups
             this_hits = get(grp, (pmt_id=i,), nothing)
 
             if !isnothing(this_hits)
                 histogram!(p, this_hits[:, :time], bins=70:1:150, xlabel="Time (ns)", #yscale=:log10,
-                #ylim=(0.1, 5000),
-                label="",
-                yscale=:log10, ylim=(0.5, 1000),
-                alpha=0.7,
-                ylabel=ylabel,
-                margin=3.2Plots.mm, xlabelfontsize=8, ylabelfontsize=8,
-                legend_position=:outertopright,
-                #legend_columns=2,
-                legendfontsize=6,
+                    #ylim=(0.1, 5000),
+                    label="",
+                    yscale=:log10, ylim=(0.5, 1000),
+                    alpha=0.7,
+                    ylabel=ylabel,
+                    margin=3.2Plots.mm, xlabelfontsize=8, ylabelfontsize=8,
+                    legend_position=:outertopright,
+                    #legend_columns=2,
+                    legendfontsize=6,
                 )
             end
         end
@@ -192,7 +192,7 @@ function plot_hits(target, groups...; ylabel="", title="")
     return plot(plots..., layout=l, size=(1200, 800), plot_title=title)
 end
 
-function plot_pmt_map(target, xmaps... ; labels, ylabel="", title="")
+function plot_pmt_map(target, xmaps...; labels, ylabel="", title="")
     l = grid(4, 4)
     plots = []
 
@@ -201,12 +201,12 @@ function plot_pmt_map(target, xmaps... ; labels, ylabel="", title="")
     for (i, (theta, phi)) in enumerate(eachcol(coords))
         if first
             p = plot(title=format("θ={:.2f}, ϕ={:.2f}", theta, phi), titlefontsize=8,
-                     legend_column=2,
-                     legendfontsize=6,
-                     legend_position=:best)
+                legend_column=2,
+                legendfontsize=6,
+                legend_position=:best)
         else
             p = plot(title=format("θ={:.2f}, ϕ={:.2f}", theta, phi), titlefontsize=8,
-                     legend_position=false)
+                legend_position=false)
         end
         first = false
 
@@ -221,7 +221,7 @@ function plot_pmt_map(target, xmaps... ; labels, ylabel="", title="")
             plot!(p, x, label=label, ylabel=ylabel, xlabel="Time (ns)",
                 margin=3.2Plots.mm, xlabelfontsize=8, ylabelfontsize=8,
                 #legend_position=:outertopright,
-               )
+            )
         end
         push!(plots, p)
 
