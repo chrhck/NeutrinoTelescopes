@@ -82,6 +82,7 @@ Zygote = "e88e6eb3-aa80-5325-afca-941959d7151f"
 
 [compat]
 Arrow = "2"
+AutoMLPipeline = "0.4"
 BenchmarkTools = "1"
 CUDA = "3"
 DataFrames = "1"
