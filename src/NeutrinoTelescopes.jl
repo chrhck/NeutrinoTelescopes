@@ -11,9 +11,10 @@ include("utils.jl")
 include("photon_propagation/PhotonProp.jl")
 include("pmt_frontend/PMTFrontEnd.jl")
 include("event_generation/EventGeneration.jl")
+include("surrogate_models/SurrogateModels.jl")
 
 
-# @reexport using .NormalizingFlow
+@reexport using .SurrogateModels
 @reexport using .PhotonPropagation
 @reexport using .PMTFrontEnd
 
