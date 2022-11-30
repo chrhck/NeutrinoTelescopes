@@ -881,7 +881,7 @@ function make_hits_from_photons(
         df[mask, :pmt_id] = pmt_ids[mask]
         df[mask, :module_id] .= target.module_id
     end
-    df = subset(df, :pmt_id => x -> x .> 0)
+    df = subset(df, :pmt_id => x -> x .> 0, :module_id => x -> x .> 0)
     df
 end
 

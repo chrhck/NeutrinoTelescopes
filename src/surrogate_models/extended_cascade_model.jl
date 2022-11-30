@@ -6,6 +6,7 @@ using TensorBoardLogger
 using SpecialFunctions
 using Logging
 using ProgressLogging
+using Random
 
 export train_model, train_model!
 
@@ -93,21 +94,23 @@ end
 
 
 Base.@kwdef struct RQNormFlowPoissonHParams
-    K::Int64
-    batch_size::Int64
-    mlp_layers::Int64
-    mlp_layer_size::Int64
-    lr::Float64
-    epochs::Int64
-    dropout::Float64
-    non_linearity::Symbol
+    K::Int64 = 10
+    batch_size::Int64 = 5000
+    mlp_layers::Int64 = 2
+    mlp_layer_size::Int64 = 512
+    lr::Float64 = 0.001
+    epochs::Int64 = 50
+    dropout::Float64 = 0.1
+    non_linearity::Symbol = :tanh
 end
 
-function train_model(data, hyperparams...)
+function train_model(data; hyperparams...)
 
-    hparams = RQNormFlowPoissonHParams(hyperparams...)
+    hparams = RQNormFlowPoissonHParams(; hyperparams...)
 
     train_data, test_data = splitobs(data, at=0.85)
+
+    rng = Random.MersenneTwister()
 
     train_loader = DataLoader(
         train_data,
@@ -136,6 +139,7 @@ function train_model(data, hyperparams...)
 
     train_model!(opt, train_loader, test_loader, model, hparams.epochs, lg)
 
+    return model
 end
 
 function train_model!(opt, train, test, model, epochs, logger)

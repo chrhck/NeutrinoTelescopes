@@ -92,6 +92,8 @@ fname = joinpath(@__DIR__, "../assets/photon_table_extended_2.hd5")
 rng = MersenneTwister(31338)
 nsel = 30000
 
+length(h5open(fname, "r")["photons"])
+
 tres, nhits, cond_labels, ds_summary = read_hdf(fname, nsel, rng)
 
 catf = CatFeatureSelector()
@@ -102,7 +104,10 @@ numf = NumFeatureSelector()
 traf = @pipeline (numf |> norm) + (catf |> ohe)
 tr_cond_labels = fit_transform!(traf, cond_labels) |> Matrix |> adjoint
 
-
+model = train_model(
+    (tres=tres, labels=tr_cond_labels, nhits=nhits),
+    epochs=10
+)
 
 
 train_model!(opt, train_loader, test_loader, rq_layer, epochs, lg)
