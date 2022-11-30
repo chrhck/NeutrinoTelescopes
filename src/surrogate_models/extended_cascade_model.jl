@@ -102,6 +102,7 @@ Base.@kwdef struct RQNormFlowPoissonHParams
     epochs::Int64 = 50
     dropout::Float64 = 0.1
     non_linearity::Symbol = :tanh
+    seed::Int64 = 31338
 end
 
 function train_model(data; hyperparams...)
@@ -110,7 +111,7 @@ function train_model(data; hyperparams...)
 
     train_data, test_data = splitobs(data, at=0.85)
 
-    rng = Random.MersenneTwister()
+    rng = Random.MersenneTwister(hparams.seed)
 
     train_loader = DataLoader(
         train_data,
