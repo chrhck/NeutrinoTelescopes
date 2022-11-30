@@ -2,7 +2,9 @@ module SurrogateModels
 
 using Reexport
 
-include("normalizing_flow.jl")
+include("rq_spline_flow.jl")
+include("extended_cascade_model.jl")
 
-@reexport using .NormalizingFlow
+@reexport using .RQSplineFlow
+@reexport using .ExtendedCascadeModel
 end

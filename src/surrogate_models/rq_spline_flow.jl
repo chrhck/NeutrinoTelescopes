@@ -74,7 +74,7 @@ TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION
 
 END OF TERMS AND CONDITIONS
 """
-module NormalizingFlow
+module RQSplineFlow
 
 using CUDA
 using Distributions
@@ -88,7 +88,7 @@ export constrain_spline_params, rqs_univariate, inv_rqs_univariate, eval_transfo
     end
 end
 
-@inline function ones_like(::T, size...) where T
+@inline function ones_like(::T, size...) where {T}
 
     if T <: CuArray
         return CuArray(ones(eltype(T), size...))
@@ -97,7 +97,7 @@ end
     end
 end
 
-@inline function trues_like(::T, size...) where T
+@inline function trues_like(::T, size...) where {T}
 
     if T <: CuArray
         return CuArray(ones(Bool, size...))
@@ -106,7 +106,7 @@ end
     end
 end
 
-@inline function falses_like(::T, size...) where T
+@inline function falses_like(::T, size...) where {T}
 
     if T <: CuArray
         return CuArray(zeros(Bool, size...))
@@ -125,9 +125,9 @@ Make bin sizes sum to `total_size` and be no less than `min_bin_size`.
 Adapted from distrax.
 """
 function _normalize_bin_sizes(unnormalized_bin_sizes,
-                              total_size,
-                              min_bin_size)
-    
+    total_size,
+    min_bin_size)
+
     num_bins = size(unnormalized_bin_sizes, 1)
 
     @assert num_bins * min_bin_size <= total_size
@@ -144,7 +144,7 @@ Make knot slopes be no less than `min_knot_slope`.
 Adapted from distrax.
 """
 function _normalize_knot_slopes(unnormalized_knot_slopes,
-                                min_knot_slope)
+    min_knot_slope)
     # The offset is such that the normalized knot slope will be equal to 1
     # whenever the unnormalized knot slope is equal to 0.
     @assert min_knot_slope < 1.0
@@ -212,7 +212,7 @@ Implements a numerically stable version of the quadratic formula.
 
 Adapted from distrayx
 """
-function safe_quadratic_root(a, b, c) 
+function safe_quadratic_root(a, b, c)
     # This is not a general solution to the quadratic equation, as it assumes
     # b ** 2 - 4. * a * c is known a priori to be positive (and which of the two
     # roots is to be used, see https://arxiv.org/abs/1906.04032).
@@ -246,7 +246,7 @@ end
 
 """
     function rqs_univariate(x_pos, y_pos, knot_slopes, x)
-Applies a rational-quadratic spline to a vector. 
+Applies a rational-quadratic spline to a vector.
 
 Implements the spline bijector introduced by:
   > Durkan et al., Neural Spline Flows, https://arxiv.org/abs/1906.04032, 2019.
@@ -275,8 +275,8 @@ function rqs_univariate(x_pos::AbstractMatrix, y_pos::AbstractMatrix, knot_slope
     # is any of the x points in range
     any_bin_in_range = any(correct_bin, dims=1)
 
-    first_bin = vcat(trues_like(x_pos, 1, size(correct_bin, 2)), falses_like(x_pos, size(correct_bin, 1)-1, size(correct_bin, 2)))
-    
+    first_bin = vcat(trues_like(x_pos, 1, size(correct_bin, 2)), falses_like(x_pos, size(correct_bin, 1) - 1, size(correct_bin, 2)))
+
     correct_bin = my_where(any_bin_in_range, correct_bin, first_bin)
 
     x_pos_bin = (x_pos[1:end-1, :][correct_bin], x_pos[2:end, :][correct_bin])
@@ -345,7 +345,7 @@ function inv_rqs_univariate(x_pos::AbstractMatrix, y_pos::AbstractMatrix, knot_s
     # is any of the x points in range
     any_bin_in_range = any(correct_bin, dims=1)
 
-    first_bin = vcat(trues_like(x_pos, 1, size(correct_bin, 2)), falses_like(x_pos, size(correct_bin, 1)-1, size(correct_bin, 2)))
+    first_bin = vcat(trues_like(x_pos, 1, size(correct_bin, 2)), falses_like(x_pos, size(correct_bin, 1) - 1, size(correct_bin, 2)))
 
     correct_bin = my_where(any_bin_in_range, correct_bin, first_bin)
 
@@ -404,10 +404,10 @@ function eval_transformed_normal_logpdf(y, params, range_min, range_max)
     ivscale = inv.(scale)
 
     # logdet is zero
-    x = y .-shift
+    x = y .- shift
 
-    
-    x  = x .* ivscale
+
+    x = x .* ivscale
     logdet_scale = log.(ivscale)
 
 
@@ -415,8 +415,8 @@ function eval_transformed_normal_logpdf(y, params, range_min, range_max)
     x, logdet_spline = inv_rqs_univariate(x_pos, y_pos, knot_slopes, x)
 
     logdet = logdet_scale .+ logdet_spline
-  
-    normal_logpdf = -0.5 .* (x .^2 .+ log(2*pi))
+
+    normal_logpdf = -0.5 .* (x .^ 2 .+ log(2 * pi))
     #normal_logpdf =  logpdf.(Normal(0, 1), x)
 
     return normal_logpdf .+ logdet

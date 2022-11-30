@@ -102,7 +102,7 @@ function run_sim(
         end
 
         setup.sources[1] = oversample_source(prop_source, 10)
-        println(format("distance {:.2f} photons: {:d}", distance,  setup.sources[1].photons))
+        println(format("distance {:.2f} photons: {:d}", distance, setup.sources[1].photons))
         oversample *= 10
 
     end
@@ -181,7 +181,8 @@ function run_sims(parsed_args)
         @SVector[0.0f0, 0.0f0, 0.0f0],
         target_radius,
         pmt_area,
-        make_pom_pmt_coordinates(Float32)
+        make_pom_pmt_coordinates(Float32),
+        UInt16(1)
     )
     spectrum = CherenkovSpectrum((300.0f0, 800.0f0), 30, medium)
 
