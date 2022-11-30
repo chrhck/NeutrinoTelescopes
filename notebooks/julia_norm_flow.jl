@@ -9,6 +9,7 @@ using CategoricalArrays
 using AutoMLPipeline
 using NeutrinoTelescopes
 using StatsBase
+using Hyperopt
 
 
 function create_pmt_table(grp, limit=true)
@@ -43,6 +44,21 @@ function preproc_labels(df)
 
     cond_labels = hcat(df[:, feat], dir_cart, pos_cart)
     return cond_labels
+end
+
+function calc_flow_inputs(p::Particle, target::MultiPMTDetector)
+
+    distance = norm(p.position .- target.position)
+    energy = p.energy
+
+    dir_theta, dir_phi = cart_to_sph(p.direction...)
+    pos_theta, pos_phi = cart_to_sph(p.position...)
+
+    df_input = DataFrame(
+        distance=distance, energy=energy, dir_theta=dir_theta, dir_phi=dir_phi,
+        pos_theta=pos_theta, pos_phi=pos_phi)
+
+    return df_input
 end
 
 
@@ -104,14 +120,27 @@ numf = NumFeatureSelector()
 traf = @pipeline (numf |> norm) + (catf |> ohe)
 tr_cond_labels = fit_transform!(traf, cond_labels) |> Matrix |> adjoint
 
-model = train_model(
-    (tres=tres, label=tr_cond_labels, nhits=nhits),
-    true,
-    epochs=10
-)
+ho = @hyperopt for i = 50,
+    sampler = RandomSampler(),
+    batch_size = [1000, 2000, 5000, 10000],
+    lr = 10 .^ (-4:0.5:-1.5),
+    mlp_layer_size = [256, 512, 768],
+    dropout = [0, 0.1, 0.3, 0.5],
+    non_linearity = [:tanh, :relu]
+
+    model, loss = train_model(
+        (tres=tres, label=tr_cond_labels, nhits=nhits),
+        true,
+        epochs=50,
+        lr=lr,
+        mlp_layer_size=mlp_layer_size,
+        dropout=dropout,
+        non_linearity=non_linearity
+    )
+    loss
+end
 
 
-train_model!(opt, train_loader, test_loader, rq_layer, epochs, lg)
 
 Flux.testmode!(rq_layer)
 h5open(fname, "r") do fid
@@ -149,8 +178,7 @@ h5open(fname, "r") do fid
 end
 
 
-l_plot =
-    cpu(rq_layer)(t_plot, l_plot)
+l_plot = cpu(rq_layer)(t_plot, l_plot)
 
 
 
