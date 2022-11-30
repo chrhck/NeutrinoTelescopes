@@ -105,7 +105,8 @@ traf = @pipeline (numf |> norm) + (catf |> ohe)
 tr_cond_labels = fit_transform!(traf, cond_labels) |> Matrix |> adjoint
 
 model = train_model(
-    (tres=tres, labels=tr_cond_labels, nhits=nhits),
+    (tres=tres, label=tr_cond_labels, nhits=nhits),
+    true,
     epochs=10
 )
 
