@@ -780,7 +780,7 @@ function run_photon_prop_no_local_cache(
         Vector(wavelengths[1:stack_idx-1]),
         Vector(dist_travelled[1:stack_idx-1]),
         Vector(times[1:stack_idx-1]),
-        zeros(UInt16, stack_idx - 1)))
+        fill(target.module_id, stack_idx - 1)))
     return hits, Vector(n_ph_sim)[1]
 
 end
