@@ -8,6 +8,8 @@ using Logging
 using ProgressLogging
 using Random
 
+using ..RQSplineFlow: eval_transformed_normal_logpdf
+
 export train_model, train_model!
 
 """
@@ -51,7 +53,7 @@ function RQNormFlowPoisson(K::Integer,
     model = []
     push!(model, Dense(24 => hidden_structure[1], non_linearity))
     push!(model, Dropout(dropout))
-    for ix in eachindex(hidden_structure[2:end])
+    for ix in 2:length(hidden_structure[2:end])
         push!(model, Dense(hidden_structure[ix-1] => hidden_structure[ix], non_linearity))
         push!(model, Dropout(dropout))
     end
@@ -59,7 +61,7 @@ function RQNormFlowPoisson(K::Integer,
     n_spline_params = 3 * K + 1
     push!(model, Dense(hidden_structure[end] => n_spline_params + 3))
 
-    return RQNormFlow(Chain(model...), K, range_min, range_max)
+    return RQNormFlowPoisson(Chain(model...), K, range_min, range_max)
 end
 
 """
@@ -105,7 +107,7 @@ Base.@kwdef struct RQNormFlowPoissonHParams
     seed::Int64 = 31338
 end
 
-function train_model(data; hyperparams...)
+function train_model(data, use_gpu=true; hyperparams...)
 
     hparams = RQNormFlowPoissonHParams(; hyperparams...)
 
@@ -125,7 +127,8 @@ function train_model(data; hyperparams...)
         shuffle=true,
         rng=rng)
 
-    hidden_structure = fill(mlp_layer_size, mlp_layers)
+
+    hidden_structure = fill(hparams.mlp_layer_size, hparams.mlp_layers)
 
     non_lins = Dict(:relu => relu, :tanh => tanh)
     non_lin = non_lins[hparams.non_linearity]
@@ -138,14 +141,20 @@ function train_model(data; hyperparams...)
     logdir = joinpath(@__DIR__, "../../tensorboard_logs/RQNormFlowPoisson")
     lg = TBLogger(logdir)
 
-    train_model!(opt, train_loader, test_loader, model, hparams.epochs, lg)
+    device = use_gpu ? gpu : cpu
+    final_test_loss = train_model!(opt, train_loader, test_loader, model, hparams.epochs, lg, device)
 
-    return model
+
+
+
+    return model, final_test_loss
 end
 
-function train_model!(opt, train, test, model, epochs, logger)
+function train_model!(opt, train, test, model, epochs, logger, device)
+    model = model |> device
     pars = Flux.params(model)
     local train_loss_flow, train_loss_poisson
+    local total_test_loss
     @progress for epoch in 1:epochs
         total_train_loss_flow = 0.0
         total_train_loss_poisson = 0.0
@@ -194,5 +203,6 @@ function train_model!(opt, train, test, model, epochs, logger)
         println("Epoch: $epoch, Train: $total_train_loss Test: $total_test_loss")
 
     end
+    return total_test_loss
 end
 end
