@@ -62,55 +62,73 @@ function calc_flow_inputs(p::Particle, target::MultiPMTDetector)
 end
 
 
-function read_hdf(fname, nsel=500, rng=nothing)
+function read_hdf(fnames, nsel_frac=0.8, rng=nothing)
 
     all_hits = []
     attr_dicts = []
-    h5open(fname, "r") do fid
-        if !isnothing(rng)
-            datasets = shuffle(rng, keys(fid["pmt_hits"]))
-        else
-            datasets = keys(fid["pmt_hits"])
-        end
-
-
-        for grpn in datasets[1:nsel]
-            grp = fid["pmt_hits"][grpn]
-            hits = create_pmt_table(grp)
-            push!(all_hits, hits)
-        end
-
-
-        for grpn in datasets
-            grp = fid["pmt_hits"][grpn]
-
-            if length(grp) < 5
-                continue
+    for fname in fnames
+        h5open(fname, "r") do fid
+            if !isnothing(rng)
+                datasets = shuffle(rng, keys(fid["pmt_hits"]))
+            else
+                datasets = keys(fid["pmt_hits"])
             end
 
-            att_d = Dict(attrs(grp))
-            att_d["nhits"] = length(grp)
-            att_d["hittime_mean"] = mean(grp[:, 1])
-            att_d["hittime_std"] = std(grp[:, 1])
+            if nsel_frac == 1
+                index_end = length(datasets)
+            else
+                index_end = Int(ceil(length(datasets)*nsel_frac))
+            end
+            
 
-            push!(attr_dicts, att_d)
+            for grpn in datasets[1:index_end]
+                grp = fid["pmt_hits"][grpn]
+                hits = create_pmt_table(grp)
+                push!(all_hits, hits)
+            end
+
+
+            for grpn in datasets
+                grp = fid["pmt_hits"][grpn]
+
+                if length(grp) < 5
+                    continue
+                end
+
+                att_d = Dict(attrs(grp))
+                att_d["nhits"] = length(grp)
+                att_d["hittime_mean"] = mean(grp[:, 1])
+                att_d["hittime_std"] = std(grp[:, 1])
+
+                push!(attr_dicts, att_d)
+            end
         end
     end
+    
+    rnd_ixs = shuffle(1:length(all_hits))
+
+    all_hits = all_hits[rnd_ixs]
+    attr_dicts = attr_dicts[rnd_ixs]
+
 
     hits_df = reduce(vcat, all_hits)
     tres = hits_df[:, :tres]
     nhits = hits_df[:, :nhits]
     return tres, nhits, preproc_labels(hits_df), DataFrame(attr_dicts)
-
 end
 
-fname = joinpath(@__DIR__, "../assets/photon_table_extended_2.hd5")
+read_hdf(fname::String, nsel, rng) = read_hdf([fname], nsel, rng)
+
+fnames = [
+    joinpath(@__DIR__, "../assets/photon_table_extended_2.hd5"),
+    joinpath(@__DIR__, "../assets/photon_table_extended_3.hd5"),
+    joinpath(@__DIR__, "../assets/photon_table_extended_4.hd5")
+    ]
 rng = MersenneTwister(31338)
-nsel = 30000
+nsel_frac = 0.7
+tres, nhits, cond_labels, ds_summary = read_hdf(fnames, nsel_frac, rng)
 
-length(h5open(fname, "r")["photons"])
-
-tres, nhits, cond_labels, ds_summary = read_hdf(fname, nsel, rng)
+nrow(cond_labels)
 
 catf = CatFeatureSelector()
 ohe = OneHotEncoder()
@@ -120,13 +138,29 @@ numf = NumFeatureSelector()
 traf = @pipeline (numf |> norm) + (catf |> ohe)
 tr_cond_labels = fit_transform!(traf, cond_labels) |> Matrix |> adjoint
 
-ho = @hyperopt for i = 50,
+nhits
+
+model, loss = train_model(
+        (tres=tres, label=tr_cond_labels, nhits=nhits),
+        true,
+        epochs=100,
+        lr=0.001,
+        mlp_layer_size=768,
+        mlp_layers=2,
+        dropout=0.4,
+        non_linearity=:relu,
+        batch_size=2000,
+        split_final=false,
+        rel_weight_poisson=0.001,
+        seed=1)
+
+
+ho = @hyperopt for i = 25,
     sampler = RandomSampler(),
-    batch_size = [1000, 2000, 5000, 10000],
-    lr = 10 .^ (-4:0.5:-1.5),
-    mlp_layer_size = [256, 512, 768],
-    dropout = [0, 0.1, 0.3, 0.5],
-    non_linearity = [:tanh, :relu]
+    batch_size = [1000, 2000, 5000],
+    lr = 10 .^ (-3:0.5:-1.5),
+    mlp_layer_size = [512, 768, 1024],
+    dropout = [0, 0.1, 0.2]
 
     model, loss = train_model(
         (tres=tres, label=tr_cond_labels, nhits=nhits),
@@ -135,11 +169,20 @@ ho = @hyperopt for i = 50,
         lr=lr,
         mlp_layer_size=mlp_layer_size,
         dropout=dropout,
-        non_linearity=non_linearity
+        non_linearity=:relu,
+        batch_size=batch_size
     )
     loss
 end
 
+fieldnames(typeof(ho))
+
+ho.results
+
+ho.history = ho.history[1:end-1]
+
+using Plots
+Plots.plot(ho, yscale=:log10)
 
 
 Flux.testmode!(rq_layer)

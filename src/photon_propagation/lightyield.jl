@@ -11,7 +11,7 @@ export total_lightyield
 
 export AngularEmissionProfile
 export PhotonSource, PointlikeIsotropicEmitter, ExtendedCherenkovEmitter, CherenkovEmitter, PointlikeCherenkovEmitter
-export AxiconeEmitter, PencilEmitter, PointlikeTimeRangeEmitter
+export AxiconeEmitter, PencilEmitter, PointlikeTimeRangeEmitter, CherenkovTrackEmitter
 export cherenkov_ang_dist, cherenkov_ang_dist_int
 export split_source, oversample_source
 
@@ -402,8 +402,6 @@ end
 
 
 
-abstract type CherenkovEmitter{T} <: PhotonSource{T} end
-
 """
     oversample_source(em::T, factor::Number) where {T <: PhotonSource}
 
@@ -460,6 +458,7 @@ JSON.lower(e::PointlikeTimeRangeEmitter) = Dict(
     "photons" => e.photons,
 )
 
+abstract type CherenkovEmitter{T} <: PhotonSource{T} end
 
 struct ExtendedCherenkovEmitter{T} <: CherenkovEmitter{T}
     position::SVector{3,T}
@@ -517,98 +516,18 @@ JSON.lower(e::PointlikeCherenkovEmitter) = Dict(
 )
 
 
-
-function particle_to_lightsource(
-    particle::Particle{T},
-    medium::MediumProperties,
-    wl_range::Tuple{T,T}
-) where {T<:Real}
-
-    total_contrib = total_lightyield(particle, medium, wl_range)
-
-    CherenkovSegment(
-        particle.position,
-        particle.direction,
-        particle.time,
-        total_contrib)
-
-
+struct CherenkovTrackEmitter{T} <: CherenkovEmitter{T}
+    position::SVector{3,T}
+    direction::SVector{3,T}
+    time::T
+    length::T
+    photons::Int64
 end
 
-#=
-function particle_to_elongated_lightsource!(
-    particle::Particle{T},
-    int_grid::AbstractArray{T},
-    medium::MediumProperties,
-    wl_range::Tuple{T,T},
-    output::Union{Zygote.Buffer,AbstractVector{PointlikeCherenkovEmitter{T}}},
-) where {T<:Real}
-
-
-    """
-    s = SobolSeq([range_cm[1]], [range_cm[2]])
-
-    n_steps = Int64(ceil(ustrip(Unitful.NoUnits, (range[2] - range[1]) / precision)))
-    int_grid = sort!(vec(reduce(hcat, next!(s) for i in 1:n_steps)))u"cm"
-    """
-
-    spectrum = CherenkovSpectrum(wl_range, 20, medium)
-
-    n_steps = length(int_grid)
-
-    fractional_contrib_vec = Vector{T}(undef, n_steps)
-
-    if typeof(output) <: Zygote.Buffer
-        fractional_contrib = Zygote.Buffer(fractional_contrib_vec)
-    else
-        fractional_contrib = fractional_contrib_vec
-    end
-
-    fractional_contrib_long!(particle.energy, int_grid, medium, particle.type, fractional_contrib)
-
-    total_contrib = (
-        frank_tamm_norm(wl_range, wl -> refractive_index(wl, medium)) *
-        cherenkov_track_length(particle.energy, particle.type)
-    )
-
-
-    step_along = [T(0.5) * (int_grid[i] + int_grid[i+1]) for i in 1:(n_steps-1)]
-
-    for i in 2:n_steps
-        this_pos = particle.position .+ step_along[i-1] .* particle.direction
-        this_time = particle.time + step_along[i-1] / T(c_vac_m_p_ns)
-
-        this_nph = pois_rand(total_contrib * fractional_contrib[i])
-
-        this_src = PointlikeCherenkovEmitter(
-            this_pos,
-            particle.direction,
-            this_time,
-            this_nph,)
-
-        output[i-1] = this_src
-    end
-
-    output
+function CherenkovTrackEmitter(particle::Particle{T}, medium::MediumProperties, wl_range::Tuple{T,T}, length::T) where {T <: Real}
+    n_photons = frank_tamm_norm(wl_range, wl -> refractive_index(wl, medium)) * length
+    return CherenkovTrackEmitter(particle.position, partile.direction, particle.time, length, Int64(ceil(n_photons)))
 end
-
-function particle_to_elongated_lightsource(
-    particle::Particle{T},
-    len_range::Tuple{T,T},
-    precision::T,
-    medium::MediumProperties,
-    wl_range::Tuple{T,T}
-) where {T<:Real}
-
-    int_grid = range(len_range[1], len_range[2], step=precision)
-    n_steps = size(int_grid, 1)
-    output = Vector{PointlikeCherenkovEmitter{T}}(undef, n_steps - 1)
-    particle_to_elongated_lightsource!(particle, int_grid, medium, wl_range, output)
-end
-
-
-=#
-
 
 
 end

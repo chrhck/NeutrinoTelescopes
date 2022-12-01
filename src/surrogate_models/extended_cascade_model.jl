@@ -48,7 +48,8 @@ function RQNormFlowPoisson(K::Integer,
     range_max::Number,
     hidden_structure::AbstractVector{<:Integer};
     dropout=0.3,
-    non_linearity=relu)
+    non_linearity=relu,
+    split_final=true)
 
     model = []
     push!(model, Dense(24 => hidden_structure[1], non_linearity))
@@ -57,9 +58,19 @@ function RQNormFlowPoisson(K::Integer,
         push!(model, Dense(hidden_structure[ix-1] => hidden_structure[ix], non_linearity))
         push!(model, Dropout(dropout))
     end
+
     # 3 K + 1 for spline, 1 for shift, 1 for scale, 1 for log-expectation
     n_spline_params = 3 * K + 1
-    push!(model, Dense(hidden_structure[end] => n_spline_params + 3))
+    if split_final
+        final = Parallel(vcat,
+                        Dense(hidden_structure[end] => n_spline_params + 2),
+                        Dense(hidden_structure[end] => 1)
+        )
+    else
+        final =  Dense(hidden_structure[end] => n_spline_params + 3)
+    end
+
+    push!(model, final)
 
     return RQNormFlowPoisson(Chain(model...), K, range_min, range_max)
 end
@@ -103,15 +114,19 @@ Base.@kwdef struct RQNormFlowPoissonHParams
     lr::Float64 = 0.001
     epochs::Int64 = 50
     dropout::Float64 = 0.1
-    non_linearity::Symbol = :tanh
+    non_linearity::Symbol = :relu
     seed::Int64 = 31338
+    split_final = false
+    rel_weight_poisson = 0.001
+    use_l2_norm = false
 end
+
 
 function train_model(data, use_gpu=true; hyperparams...)
 
     hparams = RQNormFlowPoissonHParams(; hyperparams...)
 
-    train_data, test_data = splitobs(data, at=0.85)
+    train_data, test_data = splitobs(data, at=0.7)
 
     rng = Random.MersenneTwister(hparams.seed)
 
@@ -123,7 +138,7 @@ function train_model(data, use_gpu=true; hyperparams...)
 
     test_loader = DataLoader(
         test_data,
-        batchsize=10000,
+        batchsize=50000,
         shuffle=true,
         rng=rng)
 
@@ -142,7 +157,7 @@ function train_model(data, use_gpu=true; hyperparams...)
     lg = TBLogger(logdir)
 
     device = use_gpu ? gpu : cpu
-    final_test_loss = train_model!(opt, train_loader, test_loader, model, hparams.epochs, lg, device)
+    final_test_loss = train_model!(opt, train_loader, test_loader, model, hparams.epochs, lg, device, hparams.rel_weight_poisson, hparams.use_l2_norm)
 
 
 
@@ -150,7 +165,27 @@ function train_model(data, use_gpu=true; hyperparams...)
     return model, final_test_loss
 end
 
-function train_model!(opt, train, test, model, epochs, logger, device)
+
+# Function to get dictionary of model parameters
+function fill_param_dict!(dict, m, prefix)
+    if m isa Chain
+        for (i, layer) in enumerate(m.layers)
+            fill_param_dict!(dict, layer, prefix*"layer_"*string(i)*"/"*string(layer)*"/")
+        end
+    else
+        for fieldname in fieldnames(typeof(m))
+            val = getfield(m, fieldname)
+            if val isa AbstractArray
+                val = vec(val)
+            end
+            dict[prefix*string(fieldname)] = val
+        end
+    end
+end
+
+sqnorm(x) = sum(abs2, x)
+
+function train_model!(opt, train, test, model, epochs, logger, device, rel_weight_poisson, use_l2_norm)
     model = model |> device
     pars = Flux.params(model)
     local train_loss_flow, train_loss_poisson
@@ -164,7 +199,13 @@ function train_model!(opt, train, test, model, epochs, logger, device)
             d = d |> device
             gs = gradient(pars) do
                 train_loss_flow, train_loss_poisson = log_likelihood_with_poisson(d, model)
-                return train_loss_flow + train_loss_poisson
+
+                loss =  train_loss_flow + rel_weight_poisson * train_loss_poisson 
+                if use_l2_norm
+                    loss = loss +  sum(sqnorm, pars)
+                end
+
+                return loss
             end
             total_train_loss_flow += train_loss_flow / length(d[:tres])
             total_train_loss_poisson += train_loss_poisson / length(d[:tres])
@@ -178,7 +219,7 @@ function train_model!(opt, train, test, model, epochs, logger, device)
 
         total_train_loss_flow /= length(train)
         total_train_loss_poisson /= length(train)
-        total_train_loss = total_train_loss_flow + total_train_loss_poisson
+        total_train_loss = total_train_loss_flow +  total_train_loss_poisson
 
         Flux.testmode!(model)
         total_test_loss_flow = 0
@@ -193,11 +234,15 @@ function train_model!(opt, train, test, model, epochs, logger, device)
         total_test_loss_poisson /= length(test)
         total_test_loss = total_test_loss_flow + total_test_loss_poisson
 
+        param_dict = Dict{String, Any}()
+        fill_param_dict!(param_dict, model, "")
+        
+        
         with_logger(logger) do
-            @info "loss/train" train_flow = total_train_loss_flow train_poisson = total_train_loss_poisson
-            @info "loss/test" log_step_increment = 0 test_flow = total_test_loss_flow test_poisson = total_test_loss_poisson
-            @info "loss/total" log_step_increment = 0 train_total = total_train_loss test_total = total_test_loss
-
+            @info "loss" train_flow = total_train_loss_flow train_poisson = total_train_loss_poisson
+            @info "loss" log_step_increment = 0 test_flow = total_test_loss_flow test_poisson = total_test_loss_poisson
+            @info "loss" log_step_increment = 0 train_total = total_train_loss test_total = total_test_loss
+            @info "model" params=param_dict log_step_increment=0
 
         end
         println("Epoch: $epoch, Train: $total_train_loss Test: $total_test_loss")

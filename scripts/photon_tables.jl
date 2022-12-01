@@ -57,7 +57,8 @@ function run_sim(
     target,
     spectrum,
     medium,
-    output_fname;
+    output_fname,
+    n_resample=100;
     extended=true)
 
     sim_attrs = Dict(
@@ -118,7 +119,7 @@ function run_sim(
         Matrix{Float64}(photons[:, [:tres, :pos_x, :pos_y, :pos_z, :total_weight]]),
         sim_attrs)
 
-    @progress "Resampling" for j in 1:100
+    @progress "Resampling" for j in 1:n_resample
         #=
         PMT positions are defined in a standard upright coordinate system centeres at the module
         Sample a random rotation matrix and rotate the pmts on the module accordingly.
@@ -190,6 +191,7 @@ function run_sims(parsed_args)
     n_sims = parsed_args["n_sims"]
     n_skip = parsed_args["n_skip"]
     extended = parsed_args["extended"]
+    n_resample = parse_args["n_resample"]
 
     if extended
         sobol = skip(
@@ -244,6 +246,11 @@ s = ArgParseSettings()
     arg_type = Int
     required = false
     default = 0
+    "--n_resample"
+    help = "Number of resamples per photon sim"
+    arg_type = Int
+    required = false
+    default = 100
     "--extended"
     help = "Simulate extended cascades"
     action = :store_true
