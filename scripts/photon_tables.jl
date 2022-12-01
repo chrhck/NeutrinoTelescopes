@@ -191,7 +191,7 @@ function run_sims(parsed_args)
     n_sims = parsed_args["n_sims"]
     n_skip = parsed_args["n_skip"]
     extended = parsed_args["extended"]
-    n_resample = parse_args["n_resample"]
+    n_resample = parsed_args["n_resample"]
 
     if extended
         sobol = skip(
@@ -210,7 +210,7 @@ function run_sims(parsed_args)
             dir_costheta = pars[3]
             dir_phi = pars[4]
 
-            run_sim(energy, distance, dir_costheta, dir_phi, target, spectrum, medium, parsed_args["output"], extended=true)
+            run_sim(energy, distance, dir_costheta, dir_phi, target, spectrum, medium, parsed_args["output"], n_resample, extended=true)
         end
     else
         sobol = skip(
@@ -224,7 +224,7 @@ function run_sims(parsed_args)
             dir_costheta = pars[2]
             dir_phi = 0
 
-            run_sim(energy, distance, dir_costheta, dir_phi, target, spectrum, medium, parsed_args["output"], extended=false)
+            run_sim(energy, distance, dir_costheta, dir_phi, target, spectrum, medium, parsed_args["output"], n_resample, extended=false)
         end
     end
 end
