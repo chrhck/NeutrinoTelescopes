@@ -399,26 +399,20 @@ function eval_transformed_normal_logpdf(y, params, range_min, range_max)
 
     spline_params = params[1:end-2, :]
     shift = params[end-1, :]
-    scale = exp.(params[end, :])
+    scale = sigmoid.(params[end, :]) .* 100
 
-    ivscale = inv.(scale)
-
-    # logdet is zero
-    x = y .- shift
-
-
-    x = x .* ivscale
-    logdet_scale = log.(ivscale)
-
+    #scale = 5.
+    #shift = 0.
 
     x_pos, y_pos, knot_slopes = constrain_spline_params(spline_params, range_min, range_max)
-    x, logdet_spline = inv_rqs_univariate(x_pos, y_pos, knot_slopes, x)
+    x, logdet_spline = inv_rqs_univariate(x_pos, y_pos, knot_slopes, y)
 
-    logdet = logdet_scale .+ logdet_spline
 
     normal_logpdf = -0.5 .* (x .^ 2 .+ log(2 * pi))
+
+    normal_logpdf = -log.(scale) .- 0.5 .* (log(2*π) .+ ((x .- shift) ./ scale).^2)
     #normal_logpdf =  logpdf.(Normal(0, 1), x)
 
-    return normal_logpdf .+ logdet
+    return normal_logpdf .+ logdet_spline
 end
 end

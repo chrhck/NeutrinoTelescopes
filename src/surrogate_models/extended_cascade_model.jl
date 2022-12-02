@@ -7,6 +7,7 @@ using SpecialFunctions
 using Logging
 using ProgressLogging
 using Random
+using EarlyStopping
 
 using ..RQSplineFlow: eval_transformed_normal_logpdf
 
@@ -123,7 +124,7 @@ Base.@kwdef struct RQNormFlowPoissonHParams
 end
 
 
-function train_model(data, use_gpu=true; hyperparams...)
+function train_model(data, use_gpu=true, use_early_stopping=true; hyperparams...)
 
     hparams = RQNormFlowPoissonHParams(; hyperparams...)
 
@@ -140,8 +141,7 @@ function train_model(data, use_gpu=true; hyperparams...)
     test_loader = DataLoader(
         test_data,
         batchsize=50000,
-        shuffle=true,
-        rng=rng)
+        shuffle=false)
 
 
     hidden_structure = fill(hparams.mlp_layer_size, hparams.mlp_layers)
@@ -150,7 +150,7 @@ function train_model(data, use_gpu=true; hyperparams...)
     non_lin = non_lins[hparams.non_linearity]
 
     model = RQNormFlowPoisson(
-        hparams.K, -5.0, 5.0, hidden_structure, dropout=hparams.dropout, non_linearity=non_lin)
+        hparams.K, -20., 100., hidden_structure, dropout=hparams.dropout, non_linearity=non_lin)
 
     
     opt = Flux.Optimise.Adam(hparams.lr)
@@ -159,7 +159,7 @@ function train_model(data, use_gpu=true; hyperparams...)
     lg = TBLogger(logdir)
 
     device = use_gpu ? gpu : cpu
-    final_test_loss = train_model!(opt, train_loader, test_loader, model, hparams.epochs, lg, device, hparams.rel_weight_poisson, hparams.use_l2_norm)
+    model, final_test_loss  = train_model!(opt, train_loader, test_loader, model, hparams.epochs, lg, device, hparams.rel_weight_poisson, hparams.use_l2_norm, use_early_stopping)
 
     return model, final_test_loss
 end
@@ -184,9 +184,16 @@ end
 
 sqnorm(x) = sum(abs2, x)
 
-function train_model!(opt, train, test, model, epochs, logger, device, rel_weight_poisson, use_l2_norm)
+function train_model!(opt, train, test, model, epochs, logger, device, rel_weight_poisson, use_l2_norm, use_early_stopping)
     model = model |> device
     pars = Flux.params(model)
+    
+    if use_early_stopping
+        stopper = EarlyStopper(Warmup(Patience(5); n=5), InvalidValue(), NumberSinceBest(n=10) 	,verbosity=1)
+    else
+        stopper = EarlyStopper(Never(), verbosity=1)
+    end
+    
     local train_loss_flow, train_loss_poisson
     local total_test_loss
     @progress for epoch in 1:epochs
@@ -246,7 +253,9 @@ function train_model!(opt, train, test, model, epochs, logger, device, rel_weigh
         end
         println("Epoch: $epoch, Train: $total_train_loss Test: $total_test_loss")
 
+        done!(stopper, total_test_loss) && break
+
     end
-    return total_test_loss
+    return model, total_test_loss
 end
 end

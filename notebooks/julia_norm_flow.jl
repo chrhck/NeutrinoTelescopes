@@ -11,6 +11,8 @@ using NeutrinoTelescopes
 using StatsBase
 using Hyperopt
 
+using Plots
+
 
 function create_pmt_table(grp, limit=true)
     hits = DataFrame(grp[:, :], [:tres, :pmt_id])
@@ -122,7 +124,7 @@ fnames = [
     joinpath(@__DIR__, "../assets/photon_table_extended_3.hd5"),
     ]
 rng = MersenneTwister(31338)
-nsel_frac = 0.7
+nsel_frac = 0.8
 tres, nhits, cond_labels, ds_summary = read_hdf(fnames, nsel_frac, rng)
 
 nrow(cond_labels)
@@ -135,54 +137,57 @@ numf = NumFeatureSelector()
 traf = @pipeline (numf |> norm) + (catf |> ohe)
 tr_cond_labels = fit_transform!(traf, cond_labels) |> Matrix |> adjoint
 
-nhits
-
-model, loss = train_model(
-        (tres=tres, label=tr_cond_labels, nhits=nhits),
-        true,
-        epochs=50,
-        lr=0.003,
-        mlp_layer_size=512,
-        mlp_layers=2,
-        dropout=0.1,
-        non_linearity=:relu,
-        batch_size=5000,
-        split_final=false,
-        rel_weight_poisson=1,
-        seed=1)
-
-
-ho = @hyperopt for i = 25,
+ho = @hyperopt for i = 50,
     sampler = RandomSampler(),
-    batch_size = [1000, 2000, 5000],
+    batch_size = [1000, 2000, 5000, 1000],
     lr = 10 .^ (-3:0.5:-1.5),
-    mlp_layer_size = [512, 768, 1024],
-    dropout = [0, 0.1, 0.2]
+    mlp_layer_size = [256, 512, 768, 1024],
+    dropout = [0, 0.1, 0.2],
+    split_final = [true, false],
+    non_linearity = [:relu, :tanh]
+
 
     model, loss = train_model(
         (tres=tres, label=tr_cond_labels, nhits=nhits),
         true,
-        epochs=50,
+        epochs=30,
         lr=lr,
         mlp_layer_size=mlp_layer_size,
         dropout=dropout,
-        non_linearity=:tanh,
-        batch_size=batch_size
+        non_linearity=non_linearity,
+        batch_size=batch_size,
+        split_final=split_final,
+        rel_weight_poisson=1E-3
     )
     loss
 end
 
+ho
 
-h5open(fnames[2], "r") do fid
-    Matrix(fid["pmt_hits"]["dataset_200"][:, :])
-end
+ho_res = Plots.plot(ho, yscale=:log10)
 
+Plots.savefig(ho_res, joinpath(@__DIR__, "../figures/hyperopt.png"))
+
+#=
+model, loss = train_model(
+        (tres=tres, label=tr_cond_labels, nhits=nhits),
+        true,
+        epochs=50,
+        lr=0.001,
+        mlp_layer_size=768,
+        mlp_layers=2,
+        dropout=0.1,
+        non_linearity=:relu,
+        batch_size=1000,
+        split_final=false,
+        rel_weight_poisson=1E-3,
+        seed=1)
 
 
 using Flux
 Flux.testmode!(model)
-h5open(fnames[2], "r") do fid
-    df = create_pmt_table(fid["pmt_hits"]["dataset_100"])
+h5open(fnames[1], "r") do fid
+    df = create_pmt_table(fid["pmt_hits"]["dataset_10100"])
     plot_tres = df[:, :tres]
     plot_labels = preproc_labels(df)
     @show combine(groupby(plot_labels, :pmt_id), nrow => :n)
@@ -313,3 +318,4 @@ fig
 
 
 Flux.params(widths, heights, derivs)
+=#
