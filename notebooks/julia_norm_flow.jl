@@ -108,8 +108,6 @@ function read_hdf(fnames, nsel_frac=0.8, rng=nothing)
     rnd_ixs = shuffle(1:length(all_hits))
 
     all_hits = all_hits[rnd_ixs]
-    attr_dicts = attr_dicts[rnd_ixs]
-
 
     hits_df = reduce(vcat, all_hits)
     tres = hits_df[:, :tres]
@@ -122,7 +120,6 @@ read_hdf(fname::String, nsel, rng) = read_hdf([fname], nsel, rng)
 fnames = [
     joinpath(@__DIR__, "../assets/photon_table_extended_2.hd5"),
     joinpath(@__DIR__, "../assets/photon_table_extended_3.hd5"),
-    joinpath(@__DIR__, "../assets/photon_table_extended_4.hd5")
     ]
 rng = MersenneTwister(31338)
 nsel_frac = 0.7
@@ -143,15 +140,15 @@ nhits
 model, loss = train_model(
         (tres=tres, label=tr_cond_labels, nhits=nhits),
         true,
-        epochs=100,
-        lr=0.001,
-        mlp_layer_size=768,
+        epochs=50,
+        lr=0.003,
+        mlp_layer_size=512,
         mlp_layers=2,
-        dropout=0.4,
+        dropout=0.1,
         non_linearity=:relu,
-        batch_size=2000,
+        batch_size=5000,
         split_final=false,
-        rel_weight_poisson=0.001,
+        rel_weight_poisson=1,
         seed=1)
 
 
@@ -169,25 +166,23 @@ ho = @hyperopt for i = 25,
         lr=lr,
         mlp_layer_size=mlp_layer_size,
         dropout=dropout,
-        non_linearity=:relu,
+        non_linearity=:tanh,
         batch_size=batch_size
     )
     loss
 end
 
-fieldnames(typeof(ho))
 
-ho.results
-
-ho.history = ho.history[1:end-1]
-
-using Plots
-Plots.plot(ho, yscale=:log10)
+h5open(fnames[2], "r") do fid
+    Matrix(fid["pmt_hits"]["dataset_200"][:, :])
+end
 
 
-Flux.testmode!(rq_layer)
-h5open(fname, "r") do fid
-    df = create_pmt_table(fid["pmt_hits"]["dataset_21000"])
+
+using Flux
+Flux.testmode!(model)
+h5open(fnames[2], "r") do fid
+    df = create_pmt_table(fid["pmt_hits"]["dataset_100"])
     plot_tres = df[:, :tres]
     plot_labels = preproc_labels(df)
     @show combine(groupby(plot_labels, :pmt_id), nrow => :n)
@@ -209,7 +204,7 @@ h5open(fname, "r") do fid
 
 
     fig = Figure()
-    log_pdf_eval, log_expec = cpu(rq_layer)(t_plot, l_plot)
+    log_pdf_eval, log_expec = cpu(model)(t_plot, l_plot)
 
     lines(fig[1, 1], t_plot, exp.(log_pdf_eval))
     hist!(fig[1, 1], plot_tres[mask], bins=-5:3:100, normalization=:pdf)
@@ -219,6 +214,21 @@ h5open(fname, "r") do fid
 
     fig
 end
+
+
+xs = -50:0.1:50
+K = 10
+params = zeros((3*K+3), length(xs))
+params[end-1, :] .= 0
+params[end, :] .= log(3)
+
+fig = Figure()
+plot(fig[1, 1], Normal(0, 3), color=:red, lw=3)
+
+plot!(fig[1, 1],xs, exp.(eval_transformed_normal_logpdf(xs, params, -5, 5)))
+
+fig
+using Distributions
 
 
 l_plot = cpu(rq_layer)(t_plot, l_plot)

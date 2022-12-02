@@ -49,7 +49,7 @@ function RQNormFlowPoisson(K::Integer,
     hidden_structure::AbstractVector{<:Integer};
     dropout=0.3,
     non_linearity=relu,
-    split_final=true)
+    split_final=false)
 
     model = []
     push!(model, Dense(24 => hidden_structure[1], non_linearity))
@@ -67,6 +67,7 @@ function RQNormFlowPoisson(K::Integer,
                         Dense(hidden_structure[end] => 1)
         )
     else
+        #zero_init(out, in) = vcat(zeros(out-3, in), zeros(1, in), ones(1, in), fill(1/in, 1, in)) 
         final =  Dense(hidden_structure[end] => n_spline_params + 3)
     end
 
@@ -151,6 +152,7 @@ function train_model(data, use_gpu=true; hyperparams...)
     model = RQNormFlowPoisson(
         hparams.K, -5.0, 5.0, hidden_structure, dropout=hparams.dropout, non_linearity=non_lin)
 
+    
     opt = Flux.Optimise.Adam(hparams.lr)
 
     logdir = joinpath(@__DIR__, "../../tensorboard_logs/RQNormFlowPoisson")
@@ -158,9 +160,6 @@ function train_model(data, use_gpu=true; hyperparams...)
 
     device = use_gpu ? gpu : cpu
     final_test_loss = train_model!(opt, train_loader, test_loader, model, hparams.epochs, lg, device, hparams.rel_weight_poisson, hparams.use_l2_norm)
-
-
-
 
     return model, final_test_loss
 end
@@ -200,7 +199,7 @@ function train_model!(opt, train, test, model, epochs, logger, device, rel_weigh
             gs = gradient(pars) do
                 train_loss_flow, train_loss_poisson = log_likelihood_with_poisson(d, model)
 
-                loss =  train_loss_flow + rel_weight_poisson * train_loss_poisson 
+                loss = train_loss_flow + rel_weight_poisson * train_loss_poisson 
                 if use_l2_norm
                     loss = loss +  sum(sqnorm, pars)
                 end

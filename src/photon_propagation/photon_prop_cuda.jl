@@ -187,6 +187,18 @@ end
     PhotonState(pos, ph_dir, time, wl)
 end
 
+@inline function initialize_photon_state(source::CherenkovTrackEmitter{T}, medium::MediumProperties, spectrum::Spectrum) where {T<:Real}
+    wl = initialize_wavelength(spectrum)
+
+    pos_along = uniform(T(0), T(source.length))
+    pos::SVector{3,T} = source.position .+ pos_along .* source.direction
+    time = source.time + pos_along / T(c_vac_m_ns)
+
+    ph_dir = cherenkov_angle(wl, medium)
+
+    PhotonState(pos, ph_dir, time, wl)
+end
+
 
 
 @inline function update_direction(this_dir::SVector{3,T}, medium::MediumProperties) where {T}
@@ -445,10 +457,11 @@ function cuda_propagate_photons!(
             dist_to_target = 0.0f0
             module_id::UInt16 = 0
             for target in targets
-                isec, dist_to_target = check_intersection(target, pos, dir, step_size)
+                isec, d = check_intersection(target, pos, dir, step_size)
 
                 if isec
                     module_id = target.module_id
+                    dist_to_target = d
                     break
                 end
             end
@@ -777,9 +790,9 @@ function run_photon_prop_no_local_cache(
         Vector(positions[1:stack_idx-1]),
         Vector(directions[1:stack_idx-1]),
         Vector(initial_directions[1:stack_idx-1]),
-        Vector(wavelengths[1:stack_idx-1]),
-        Vector(dist_travelled[1:stack_idx-1]),
+        Vector(wavelengths[1:stack_idx-1])        ,
         Vector(times[1:stack_idx-1]),
+        Vector(dist_travelled[1:stack_idx-1]),
         fill(target.module_id, stack_idx - 1)))
     return hits, Vector(n_ph_sim)[1]
 
@@ -894,6 +907,7 @@ function calc_time_residual!(df::AbstractDataFrame, setup::PhotonPropSetup)
         target = targ_id_map[key.module_id]
         distance = norm(setup.sources[1].position .- target.position)
         tgeo = (distance - target.radius) ./ (c_vac / refractive_index(800.0f0, setup.medium))
+        
         subdf[!, :tres] = (subdf[:, :time] .- tgeo)
     end
 
