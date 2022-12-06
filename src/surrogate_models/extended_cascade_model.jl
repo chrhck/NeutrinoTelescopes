@@ -8,13 +8,26 @@ using Logging
 using ProgressLogging
 using Random
 using EarlyStopping
+using DataFrames
+using CategoricalArrays
+using AutoMLPipeline
+using HDF5
+using StatsBase
+
 
 using ..RQSplineFlow: eval_transformed_normal_logpdf
+using ...Types
+using ...Utils
+using ...PhotonPropagation.Detection
 
-export train_model, train_model!
+export create_pmt_table, preproc_labels, read_hdf, calc_flow_inputs, fit_trafo_pipeline
+export train_time_expectation_model, train_model!, RQNormFlowHParams, setup_time_expectation_model, setup_dataloaders
+
+
+abstract type ArrivalTimeSurrogate end
 
 """
-    RQNormFlowPoisson(K::Integer,
+    RQNormFlow(K::Integer,
                       range_min::Number,
                       range_max::Number,
                       hidden_structure::AbstractVector{<:Integer};
@@ -33,24 +46,29 @@ parametrized by an embedding (MLP).
 - hidden_structure:  Number of nodes per MLP layer
 - dropout: Dropout value (between 0 and 1) used in training (default=0.3)
 - non_linearity: Non-linearity used in MLP (default=relu)
+- add_log_expec: Also predict log-expectation
+- split_final=false: Split the final layer into one for predicting the spline params and one for the log_expec
 """
-struct RQNormFlowPoisson
+struct RQNormFlow <: ArrivalTimeSurrogate
     embedding::Chain
     K::Integer
     range_min::Float64
     range_max::Float64
+    has_log_expec::Bool
 end
 
 # Make embedding parameters trainable
-Flux.@functor RQNormFlowPoisson (embedding,)
+Flux.@functor RQNormFlow (embedding,)
 
-function RQNormFlowPoisson(K::Integer,
+function RQNormFlow(K::Integer,
     range_min::Number,
     range_max::Number,
     hidden_structure::AbstractVector{<:Integer};
     dropout=0.3,
     non_linearity=relu,
-    split_final=false)
+    add_log_expec=false,
+    split_final=false,
+    )
 
     model = []
     push!(model, Dense(24 => hidden_structure[1], non_linearity))
@@ -62,53 +80,76 @@ function RQNormFlowPoisson(K::Integer,
 
     # 3 K + 1 for spline, 1 for shift, 1 for scale, 1 for log-expectation
     n_spline_params = 3 * K + 1
-    if split_final
+    n_flow_params = n_spline_params + 2
+    
+    
+    if add_log_expec && split_final
         final = Parallel(vcat,
-                        Dense(hidden_structure[end] => n_spline_params + 2),
+                        Dense(hidden_structure[end] => n_flow_params),
                         Dense(hidden_structure[end] => 1)
         )
-    else
+    elseif add_log_expec && !split_final
         #zero_init(out, in) = vcat(zeros(out-3, in), zeros(1, in), ones(1, in), fill(1/in, 1, in)) 
-        final =  Dense(hidden_structure[end] => n_spline_params + 3)
+        final =  Dense(hidden_structure[end] => n_flow_params + 1)
+    else
+        final = Dense(hidden_structure[end] => n_flow_params)
     end
-
     push!(model, final)
 
-    return RQNormFlowPoisson(Chain(model...), K, range_min, range_max)
+    return RQNormFlow(Chain(model...), K, range_min, range_max, add_log_expec)
 end
 
 """
-    (m::RQNormFlowPoisson)(x, cond)
+    (m::RQNormFlow)(x, cond)
 
 Evaluate normalizing flow at values `x` with conditional values `cond`.
 
 Returns logpdf and log-expectation
 """
-function (m::RQNormFlowPoisson)(x, cond)
+function (m::RQNormFlow)(x, cond, pred_log_expec=false)
     params = m.embedding(Float64.(cond))
-    spline_params = params[1:end-1, :]
-    logpdf_eval = eval_transformed_normal_logpdf(x, spline_params, m.range_min, m.range_max)
-    log_expec = params[end, :]
 
-    return logpdf_eval, log_expec
+    @assert !pred_log_expec || (pred_log_expec && m.has_log_expec) "Requested to return log expectation, but model doesn't provide.
+    "
+    if pred_log_expec
+        spline_params = params[1:end-1, :]
+        logpdf_eval = eval_transformed_normal_logpdf(x, spline_params, m.range_min, m.range_max)
+        log_expec = params[end, :]
+
+        return logpdf_eval, log_expec
+    else
+        logpdf_eval = eval_transformed_normal_logpdf(x, params, m.range_min, m.range_max)
+        return logpdf_eval
+    end
 end
 
 """
-    rq_norm_flow_poisson_loss(x::NamedTuple, model::RQNormFlowPoisson)
+    log_likelihood_with_poisson(x::NamedTuple, model::RQNormFlow)
 
 Evaluate model and return sum of logpdfs of normalizing flow and poisson
 """
-function log_likelihood_with_poisson(x::NamedTuple, model::RQNormFlowPoisson)
-    logpdf_eval, log_expec = model(x[:tres], x[:label])
+function log_likelihood_with_poisson(x::NamedTuple, model::RQNormFlow)
+    logpdf_eval, log_expec = model(x[:tres], x[:label], true)
 
     # poisson: log(exp(-lambda) * lambda^k)
-    poiss_f = -exp.(log_expec) .+ x[:nhits] .* log_expec .- loggamma.(x[:nhits] .+ 1.0)
+    poiss_f = x[:nhits] .* log_expec .- exp.(log_expec) .- loggamma.(x[:nhits] .+ 1.0)
 
-    return -sum(logpdf_eval), -sum(poiss_f)
+    return -(sum(logpdf_eval)  + sum(poiss_f)) /  length(x[:tres])
 end
 
 
-Base.@kwdef struct RQNormFlowPoissonHParams
+"""
+    log_likelihood_with_poisson(x::NamedTuple, model::RQNormFlow)
+
+Evaluate model and return sum of logpdfs of normalizing flow and poisson
+"""
+function log_likelihood(x::NamedTuple, model::RQNormFlow)
+    logpdf_eval = model(x[:tres], x[:label], false)
+    return -sum(logpdf_eval) / length(x[:tres])
+end
+
+
+Base.@kwdef struct RQNormFlowHParams
     K::Int64 = 10
     batch_size::Int64 = 5000
     mlp_layers::Int64 = 2
@@ -118,18 +159,24 @@ Base.@kwdef struct RQNormFlowPoissonHParams
     dropout::Float64 = 0.1
     non_linearity::Symbol = :relu
     seed::Int64 = 31338
-    split_final = false
-    rel_weight_poisson = 0.001
     use_l2_norm = false
 end
 
+function setup_time_expectation_model(hparams::RQNormFlowHParams)
+    hidden_structure = fill(hparams.mlp_layer_size, hparams.mlp_layers)
 
-function train_model(data, use_gpu=true, use_early_stopping=true; hyperparams...)
+    non_lins = Dict(:relu => relu, :tanh => tanh)
+    non_lin = non_lins[hparams.non_linearity]
 
-    hparams = RQNormFlowPoissonHParams(; hyperparams...)
+    model = RQNormFlow(
+        hparams.K, -20., 100., hidden_structure, dropout=hparams.dropout, non_linearity=non_lin,
+        add_log_expec=true
+        )
+    return model
+end
 
+function setup_dataloaders(data, hparams::RQNormFlowHParams)
     train_data, test_data = splitobs(data, at=0.7)
-
     rng = Random.MersenneTwister(hparams.seed)
 
     train_loader = DataLoader(
@@ -143,25 +190,27 @@ function train_model(data, use_gpu=true, use_early_stopping=true; hyperparams...
         batchsize=50000,
         shuffle=false)
 
+    return train_loader, test_loader
+end
 
-    hidden_structure = fill(hparams.mlp_layer_size, hparams.mlp_layers)
 
-    non_lins = Dict(:relu => relu, :tanh => tanh)
-    non_lin = non_lins[hparams.non_linearity]
+function train_time_expectation_model(data, use_gpu=true, use_early_stopping=true; hyperparams...)
 
-    model = RQNormFlowPoisson(
-        hparams.K, -20., 100., hidden_structure, dropout=hparams.dropout, non_linearity=non_lin)
+    hparams = RQNormFlowHParams(; hyperparams...)
 
-    
+    model = setup_time_expectation_model(hparams)
+
     opt = Flux.Optimise.Adam(hparams.lr)
 
-    logdir = joinpath(@__DIR__, "../../tensorboard_logs/RQNormFlowPoisson")
+    logdir = joinpath(@__DIR__, "../../tensorboard_logs/RQNormFlow")
     lg = TBLogger(logdir)
 
-    device = use_gpu ? gpu : cpu
-    model, final_test_loss  = train_model!(opt, train_loader, test_loader, model, hparams.epochs, lg, device, hparams.rel_weight_poisson, hparams.use_l2_norm, use_early_stopping)
+    train_loader, test_loader = setup_dataloaders(data, hparams)
 
-    return model, final_test_loss
+    device = use_gpu ? gpu : cpu
+    model, final_test_loss  = train_model!(opt, train_loader, test_loader, model, log_likelihood_with_poisson, hparams, lg, device, use_early_stopping)
+
+    return model, final_test_loss, hparams, opt
 end
 
 
@@ -184,70 +233,55 @@ end
 
 sqnorm(x) = sum(abs2, x)
 
-function train_model!(opt, train, test, model, epochs, logger, device, rel_weight_poisson, use_l2_norm, use_early_stopping)
+function train_model!(opt, train, test, model, loss_function, hparams, logger, device, use_early_stopping)
     model = model |> device
     pars = Flux.params(model)
     
     if use_early_stopping
-        stopper = EarlyStopper(Warmup(Patience(5); n=5), InvalidValue(), NumberSinceBest(n=10) 	,verbosity=1)
+        stopper = EarlyStopper(Warmup(Patience(5); n=5), InvalidValue(), NumberSinceBest(n=10), verbosity=1)
     else
         stopper = EarlyStopper(Never(), verbosity=1)
     end
     
-    local train_loss_flow, train_loss_poisson
+    local loss
     local total_test_loss
-    @progress for epoch in 1:epochs
-        total_train_loss_flow = 0.0
-        total_train_loss_poisson = 0.0
+    
+    @progress for epoch in 1:hparams.epochs
 
         Flux.trainmode!(model)
+        
+        total_train_loss = 0.
         for d in train
             d = d |> device
             gs = gradient(pars) do
-                train_loss_flow, train_loss_poisson = log_likelihood_with_poisson(d, model)
-
-                loss = train_loss_flow + rel_weight_poisson * train_loss_poisson 
-                if use_l2_norm
-                    loss = loss +  sum(sqnorm, pars)
+                loss = loss_function(d, model)
+                if hparams.use_l2_norm
+                    loss = loss + sum(sqnorm, pars)
                 end
 
                 return loss
             end
-            total_train_loss_flow += train_loss_flow / length(d[:tres])
-            total_train_loss_poisson += train_loss_poisson / length(d[:tres])
-            #=
-            with_logger(logger) do
-                @info "train" batch_loss=train_loss
-            end
-            =#
+            total_train_loss += loss
             Flux.update!(opt, pars, gs)
         end
 
-        total_train_loss_flow /= length(train)
-        total_train_loss_poisson /= length(train)
-        total_train_loss = total_train_loss_flow +  total_train_loss_poisson
+
+        total_train_loss /= length(train)
 
         Flux.testmode!(model)
-        total_test_loss_flow = 0
-        total_test_loss_poisson = 0
+        total_test_loss = 0
         for d in test
             d = d |> device
-            test_loss_flow, test_loss_poisson = log_likelihood_with_poisson(d, model)
-            total_test_loss_flow += test_loss_flow / length(d[:tres])
-            total_test_loss_poisson += test_loss_poisson / length(d[:tres])
+            total_test_loss += loss_function(d, model) 
         end
-        total_test_loss_flow /= length(test)
-        total_test_loss_poisson /= length(test)
-        total_test_loss = total_test_loss_flow + total_test_loss_poisson
+        total_test_loss  /= length(test)
 
         param_dict = Dict{String, Any}()
         fill_param_dict!(param_dict, model, "")
         
         
         with_logger(logger) do
-            @info "loss" train_flow = total_train_loss_flow train_poisson = total_train_loss_poisson
-            @info "loss" log_step_increment = 0 test_flow = total_test_loss_flow test_poisson = total_test_loss_poisson
-            @info "loss" log_step_increment = 0 train_total = total_train_loss test_total = total_test_loss
+            @info "loss" train = total_train_loss test = total_test_loss
             @info "model" params=param_dict log_step_increment=0
 
         end
@@ -258,4 +292,115 @@ function train_model!(opt, train, test, model, epochs, logger, device, rel_weigh
     end
     return model, total_test_loss
 end
+
+
+function create_pmt_table(grp, limit=true)
+    hits = DataFrame(grp[:, :], [:tres, :pmt_id])
+    for (k, v) in attrs(grp)
+        hits[!, k] .= v
+    end
+
+    hits = DataFrames.transform!(groupby(hits, :pmt_id), nrow => :hits_per_pmt)
+
+    if limit && (nrow(hits) > 200)
+        hits = hits[1:200, :]
+    end
+
+    return hits
+end
+
+
+function preproc_labels(df)
+
+    df[!, :log_distance] = log.(df[:, :distance])
+    df[!, :log_energy] = log.(df[:, :energy])
+    dir_cart = DataFrame(reduce(hcat, sph_to_cart.(df[:, :dir_theta], df[:, :dir_phi]))', [:dir_x, :dir_y, :dir_z])
+    pos_cart = DataFrame(reduce(hcat, sph_to_cart.(df[:, :pos_theta], df[:, :pos_phi]))', [:pos_x, :pos_y, :pos_z])
+
+    if "pmt_id" in names(df)
+        df[!, :pmt_id] = categorical(df[:, :pmt_id], levels=1:16)
+        feat = [:pmt_id, :log_distance, :log_energy]
+    else
+        feat = [:log_distance, :log_energy]
+    end
+
+    cond_labels = hcat(df[:, feat], dir_cart, pos_cart)
+    return cond_labels
+end
+
+function calc_flow_inputs(p::Particle, target::MultiPMTDetector)
+
+    distance = norm(p.position .- target.position)
+    energy = p.energy
+
+    dir_theta, dir_phi = cart_to_sph(p.direction...)
+    pos_theta, pos_phi = cart_to_sph(p.position...)
+
+    df_input = DataFrame(
+        distance=distance, energy=energy, dir_theta=dir_theta, dir_phi=dir_phi,
+        pos_theta=pos_theta, pos_phi=pos_phi)
+
+    return df_input
+end
+
+
+function read_hdf(fnames, nsel_frac=0.8, rng=nothing)
+
+    all_hits = []
+    for fname in fnames
+        h5open(fname, "r") do fid
+            if !isnothing(rng)
+                datasets = shuffle(rng, keys(fid["pmt_hits"]))
+            else
+                datasets = keys(fid["pmt_hits"])
+            end
+
+            if nsel_frac == 1
+                index_end = length(datasets)
+            else
+                index_end = Int(ceil(length(datasets)*nsel_frac))
+            end
+            
+
+            for grpn in datasets[1:index_end]
+                grp = fid["pmt_hits"][grpn]
+                hits = create_pmt_table(grp)
+                push!(all_hits, hits)
+            end
+        end
+    end
+    
+    rnd_ixs = shuffle(1:length(all_hits))
+
+    all_hits = all_hits[rnd_ixs]
+
+    hits_df = reduce(vcat, all_hits)
+
+    tres = hits_df[:, :tres]
+    nhits = hits_df[:, :hits_per_pmt]
+    return tres, nhits, preproc_labels(hits_df)
+end
+
+read_hdf(fname::String, nsel, rng) = read_hdf([fname], nsel, rng)
+
+
+function _make_traf_pipeline()
+    catf = CatFeatureSelector()
+    ohe = OneHotEncoder()
+    norm = SKPreprocessor("Normalizer")
+    numf = NumFeatureSelector()
+    
+    traf = @pipeline (numf |> norm) + (catf |> ohe)
+    return traf
+end
+
+function fit_trafo_pipeline(labels)
+    traf = _make_traf_pipeline()
+    tr_labels = fit_transform!(traf, labels) |> Matrix |> adjoint
+    return tr_labels, traf
+end
+
+
+
+
 end
