@@ -21,7 +21,7 @@ using ...Types
 using ...Utils
 using ...PhotonPropagation.Detection
 
-export create_pmt_table, preproc_labels, read_hdf, calc_flow_inputs, fit_trafo_pipeline
+export create_pmt_table, preproc_labels, read_hdf, calc_flow_inputs, fit_trafo_pipeline, log_likelihood_with_poisson
 export train_time_expectation_model, train_model!, RQNormFlowHParams, setup_time_expectation_model, setup_dataloaders
 
 
