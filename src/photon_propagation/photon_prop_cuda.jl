@@ -885,17 +885,21 @@ function make_hits_from_photons(
     setup::PhotonPropSetup,
     target_orientation::AbstractMatrix{<:Real})
 
-    df[!, :module_id] .= 0
-    df[!, :pmt_id] .= 0
-    for target in setup.targets
-        pmt_ids = check_pmt_hit(df[:, :position], target, target_orientation)
+    targ_id_map = Dict([target.module_id => target for target in setup.targets])
 
+    hits = []
+    for (key, subdf) in pairs(groupby(df, :module_id))
+        target = targ_id_map[key.module_id]
+        pmt_ids = check_pmt_hit(subdf[:, :position], target, target_orientation)
         mask = pmt_ids .> 0
-        df[mask, :pmt_id] = pmt_ids[mask]
-        df[mask, :module_id] .= target.module_id
+        h = DataFrame(copy(subdf[mask, :]))
+        h[!, :pmt_id] .= pmt_ids[mask]
+        push!(hits, h)
+    
     end
-    df = subset(df, :pmt_id => x -> x .> 0, :module_id => x -> x .> 0)
-    df
+
+    return reduce(vcat, hits) 
+
 end
 
 function calc_time_residual!(df::AbstractDataFrame, setup::PhotonPropSetup)
