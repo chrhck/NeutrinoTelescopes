@@ -13,6 +13,7 @@ using CategoricalArrays
 using AutoMLPipeline
 using HDF5
 using StatsBase
+using LinearAlgebra
 
 
 using ..RQSplineFlow: eval_transformed_normal_logpdf
@@ -328,19 +329,74 @@ function preproc_labels(df)
     return cond_labels
 end
 
-function calc_flow_inputs(p::Particle, target::MultiPMTDetector)
 
-    distance = norm(p.position .- target.position)
-    energy = p.energy
+function _calc_flow_inputs(
+    particles::AbstractVector{<:Particle},
+    targets::AbstractVector{T},
+    traf) where {T <: MultiPMTDetector}
 
-    dir_theta, dir_phi = cart_to_sph(p.direction...)
-    pos_theta, pos_phi = cart_to_sph(p.position...)
+    input_len = length(particles) * length(targets)
+    n_pmt = get_pmt_count(T)
 
-    df_input = DataFrame(
-        distance=distance, energy=energy, dir_theta=dir_theta, dir_phi=dir_phi,
-        pos_theta=pos_theta, pos_phi=pos_phi)
 
+
+    input = (
+        distance=Vector{Float64}(undef, input_len * n_pmt),
+        energy=Vector{Float64}(undef, input_len * n_pmt),
+        dir_theta=Vector{Float64}(undef, input_len * n_pmt),
+        dir_phi=Vector{Float64}(undef, input_len * n_pmt),
+        pos_theta=Vector{Float64}(undef, input_len * n_pmt),
+        pos_phi=Vector{Float64}(undef, input_len * n_pmt),
+        pmt_id=Vector{Int64}(undef, input_len * n_pmt))
+    
+    li = LinearIndices((1:length(particles), 1:length(targets), 1:n_pmt))
+
+    for i in eachindex(particles), j in eachindex(targets)
+        
+        p = particles[i]
+        t = targets[j]
+
+        distance = norm(p.position .- t.position)
+        energy = p.energy
+
+        normed_pos = p.position ./ norm(p.position)
+        dir_theta, dir_phi = cart_to_sph(p.direction...)
+        pos_theta, pos_phi = cart_to_sph(normed_pos...)
+
+        for k in 1:n_pmt
+            input.distance[li[i, j, k]] = distance
+            input.energy[li[i, j, k]] = energy
+            input.dir_theta[li[i, j, k]] = dir_theta
+            input.dir_phi[li[i, j, k]] = dir_phi
+            input.pos_theta[li[i, j, k]] = pos_theta
+            input.pos_phi[li[i, j, k]] = pos_phi
+            input.pmt_id[li[i, j, k]] = k
+        end
+    end
+
+    df_input = DataFrame(input)
     return df_input
+end
+
+function calc_flow_inputs(
+    particles::AbstractVector{<:Particle},
+    targets::AbstractVector{<:MultiPMTDetector},
+    traf)
+
+    trf_labels = AutoMLPipeline.transform(traf, preproc_labels(_calc_flow_inputs(particles, targets, traf)))
+
+    return trf_labels |> Matrix |> adjoint
+end
+
+
+function calc_flow_inputs(particle::Particle, target::MultiPMTDetector, pmt_id::Integer, traf)
+    
+    df_labels = _calc_flow_inputs([particle], [target], traf)
+    mask = df_labels[:, :pmt_id] .== pmt_id
+
+    trf_labels = AutoMLPipeline.transform(traf, preproc_labels(df_labels[mask, :]))
+    return  trf_labels |> Matrix |> adjoint
+
 end
 
 

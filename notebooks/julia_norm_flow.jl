@@ -6,14 +6,14 @@ using Base.Iterators
 using CUDA
 using BenchmarkTools
 using Random
-
+using StaticArrays
 using AutoMLPipeline
 
 using StatsBase
 using Hyperopt
 using Flux
 using Plots
-using BSON: @save
+using BSON: @save, @load
 
 
 fnames = [
@@ -26,37 +26,6 @@ rng = MersenneTwister(31338)
 nsel_frac = 0.9
 tres, nhits, cond_labels = read_hdf(fnames, nsel_frac, rng)
 tr_cond_labels, traf = fit_trafo_pipeline(cond_labels)
-
-
-ho = @hyperopt for i = 50,
-    sampler = RandomSampler(),
-    batch_size = [1000, 2000, 5000, 10000],
-    lr = 10 .^ (-3:0.5:-1.5),
-    mlp_layer_size = [256, 512, 768, 1024],
-    dropout = [0, 0.1, 0.2],
-    non_linearity = [:relu, :tanh]
-
-
-    model, loss = train_time_model(
-        (tres=tres, label=tr_cond_labels, nhits=nhits),
-        true,
-        true,
-        epochs=30,
-        lr=lr,
-        mlp_layer_size=mlp_layer_size,
-        dropout=dropout,
-        non_linearity=non_linearity,
-        batch_size=batch_size,
-    )
-    loss
-end
-
-ho
-
-ho_res = Plots.plot(ho, yscale=:log10)
-
-Plots.savefig(ho_res, joinpath(@__DIR__, "../figures/hyperopt.png"))
-
 
 model, model_loss, hparams, opt = train_time_expectation_model(
         (tres=tres, label=tr_cond_labels, nhits=nhits),
@@ -74,6 +43,9 @@ model, model_loss, hparams, opt = train_time_expectation_model(
 model_path = joinpath(@__DIR__, "../assets/rq_spline_model.bson")
 model = cpu(model)
 @save model_path model hparams
+
+model_path = joinpath(@__DIR__, "../assets/rq_spline_model.bson")
+@load model_path model hparams
 
 
 Flux.testmode!(model)
@@ -120,6 +92,37 @@ h5open(fnames[2], "r") do fid
     fig
 end
 
+
+pos = SA[0., 20., 0.]
+dir_theta = deg2rad(20)
+dir_phi = deg2rad(50)
+dir = sph_to_cart(dir_theta, dir_phi)
+
+pmt_area = Float32((75e-3 / 2)^2 * π)
+target_radius = 0.21f0
+
+p = Particle(pos, dir, 0., 1E5, PEPlus)
+target = MultiPMTDetector(
+        @SVector[0.0f0, 0.0f0, 0.0f0],
+        target_radius,
+        pmt_area,
+        make_pom_pmt_coordinates(Float32),
+        UInt16(1)
+    )
+
+
+input = calc_flow_inputs([p], [target], traf)
+
+get_pmt_count(typeof(target))
+
+fig = Figure()
+ax = Axis(fig[1, 1])
+t_plot = -5:0.1:50
+for i in 1:16
+    l_plot = repeat(Vector(input[:, i]), 1, length(t_plot))
+    lines!(ax, t_plot, exp.(model(t_plot, l_plot, true)[1]))
+end
+fig
 
 #summary_data = ds_summary[:, [:nhits, :hittime_mean, :hittime_std]]
 

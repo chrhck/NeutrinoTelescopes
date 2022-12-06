@@ -52,8 +52,9 @@ JSON.lower(d::MultiPMTDetector) = Dict(
     "pmt_area" => d.pmt_area,
     "pmt_coordinates" => d.pmt_coordinates)
 
-get_pmt_count(det::DetectionSphere) = 1
-get_pmt_count(det::MultiPMTDetector) = size(det.pmt_coordinates, 2)
+get_pmt_count(::DetectionSphere) = 1
+get_pmt_count(::MultiPMTDetector) = size(det.pmt_coordinates, 2)
+get_pmt_count(::Type{MultiPMTDetector{T, N, L}}) where {T, N, L} = N
 
 
 function get_pmt_positions(
