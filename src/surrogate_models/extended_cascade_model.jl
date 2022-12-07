@@ -23,6 +23,7 @@ using ...PhotonPropagation.Detection
 
 export create_pmt_table, preproc_labels, read_hdf, calc_flow_inputs, fit_trafo_pipeline, log_likelihood_with_poisson
 export train_time_expectation_model, train_model!, RQNormFlowHParams, setup_time_expectation_model, setup_dataloaders
+export Normalizer
 
 
 abstract type ArrivalTimeSurrogate end
@@ -310,23 +311,57 @@ function create_pmt_table(grp, limit=true)
     return hits
 end
 
+struct Normalizer{T}
+    mean::T
+    σ::T
+end
 
-function preproc_labels(df)
+Normalizer(x::AbstractVector) = Normalizer(mean(x), std(x))
+(norm::Normalizer)(x::AbstractVector) = (x .- norm.mean) ./ norm.σ
+
+function fit_normalizer!(x::AbstractVector)
+    tf = Normalizer(x)
+    x .= tf(x)
+    return x, tf
+end
+
+
+function preproc_labels(df, norm_dict=nothing)
 
     df[!, :log_distance] = log.(df[:, :distance])
     df[!, :log_energy] = log.(df[:, :energy])
     dir_cart = DataFrame(reduce(hcat, sph_to_cart.(df[:, :dir_theta], df[:, :dir_phi]))', [:dir_x, :dir_y, :dir_z])
     pos_cart = DataFrame(reduce(hcat, sph_to_cart.(df[:, :pos_theta], df[:, :pos_phi]))', [:pos_x, :pos_y, :pos_z])
 
-    if "pmt_id" in names(df)
-        df[!, :pmt_id] = categorical(df[:, :pmt_id], levels=1:16)
-        feat = [:pmt_id, :log_distance, :log_energy]
+    cond_labels = hcat(df[:, [:log_distance, :log_energy]], dir_cart, pos_cart)
+
+    if isnothing(norm_dict)
+        norm_dict = Dict{String, Normalizer}()
+        for col in names(cond_labels)
+
+            _, tf = fit_normalizer!(cond_labels[!, col])
+            norm_dict[col] = tf
+        end
     else
-        feat = [:log_distance, :log_energy]
+        for col in names(cond_labels)
+            tf = norm_dict[col]
+
+            cond_labels[!, col] .= tf(cond_labels[!, col])
+        end
     end
 
-    cond_labels = hcat(df[:, feat], dir_cart, pos_cart)
-    return cond_labels
+
+    if "pmt_id" in names(df)
+        df[!, :pmt_id] = categorical(df[:, :pmt_id], levels=1:16)
+        
+        lev = levels(df[:, :pmt_id])
+        lev_names = Symbol.(Ref("pmt_"), Int.(lev))
+
+        one_hot = DataFrame((lev .== permutedims(df[:, :pmt_id]))', lev_names)
+       
+        cond_labels = hcat(cond_labels, one_hot)
+    end
+    return cond_labels, norm_dict
 end
 
 
@@ -434,7 +469,8 @@ function read_hdf(fnames, nsel_frac=0.8, rng=nothing)
 
     tres = hits_df[:, :tres]
     nhits = hits_df[:, :hits_per_pmt]
-    return tres, nhits, preproc_labels(hits_df)
+    cond_labels, tf_dict = preproc_labels(hits_df)
+    return tres, nhits, cond_labels |>Matrix |>Adjoint, tf_dict
 end
 
 read_hdf(fname::String, nsel, rng) = read_hdf([fname], nsel, rng)

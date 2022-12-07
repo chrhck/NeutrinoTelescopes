@@ -7,7 +7,8 @@ using CUDA
 using BenchmarkTools
 using Random
 using StaticArrays
-using AutoMLPipeline
+
+using OneHotArrays
 
 using StatsBase
 using Hyperopt
@@ -24,16 +25,15 @@ fnames = [
     ]
 rng = MersenneTwister(31338)
 nsel_frac = 0.9
-tres, nhits, cond_labels = read_hdf(fnames, nsel_frac, rng)
-tr_cond_labels, traf = fit_trafo_pipeline(cond_labels)
+tres, nhits, cond_labels, tf_dict = read_hdf(fnames, nsel_frac, rng)
 
 model, model_loss, hparams, opt = train_time_expectation_model(
-        (tres=tres, label=tr_cond_labels, nhits=nhits),
+        (tres=tres, label=cond_labels, nhits=nhits),
         true,
         true,
         epochs=100,
         lr=0.001,
-        mlp_layer_size=512,
+        mlp_layer_size=768,
         mlp_layers=2,
         dropout=0,
         non_linearity=:relu,
@@ -42,36 +42,33 @@ model, model_loss, hparams, opt = train_time_expectation_model(
 
 model_path = joinpath(@__DIR__, "../assets/rq_spline_model.bson")
 model = cpu(model)
-@save model_path model hparams
+@save model_path model hparams opt tf_dict
 
 model_path = joinpath(@__DIR__, "../assets/rq_spline_model.bson")
-@load model_path model hparams
+@load model_path model hparams opt tf_dict
 
 
 Flux.testmode!(model)
 
 h5open(fnames[2], "r") do fid
-    df = create_pmt_table(fid["pmt_hits"]["dataset_2500"])
+    df = create_pmt_table(fid["pmt_hits"]["dataset_1500"])
     plot_tres = df[:, :tres]
-    plot_labels = preproc_labels(df)
+    plot_labels, _ = preproc_labels(df, tf_dict)
 
-    @show combine(groupby(plot_labels, :pmt_id), nrow => :n)
 
-    n_per_pmt = combine(groupby(plot_labels, :pmt_id), nrow => :n)
+    n_per_pmt = combine(groupby(df, :pmt_id), nrow => :n)
     max_i = argmax(n_per_pmt[:, :n])
 
 
     pmt_plot = n_per_pmt[max_i, :pmt_id]
-    mask = plot_labels.pmt_id .== pmt_plot
+    mask = df.pmt_id .== pmt_plot
 
     plot_tres_m = plot_tres[mask]
     plot_labels_m = plot_labels[mask, :]
 
-    plot_labels_m_tf = AutoMLPipeline.transform(traf, plot_labels_m)
-
 
     t_plot = -5:0.1:50
-    l_plot = repeat(Vector(plot_labels_m_tf[1, :]), 1, length(t_plot))
+    l_plot = repeat(Vector(plot_labels[1, :]), 1, length(t_plot))
 
 
     fig = Figure()

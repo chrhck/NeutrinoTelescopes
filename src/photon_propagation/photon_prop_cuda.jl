@@ -236,13 +236,14 @@ end
 
     dpos = pos .- target_pos
 
+    #=
     # Check if intersection is even possible
     if any(((dpos .- target.radius) .> 0) .&& (dir .> 0))
         return false, NaN32
     elseif any(((dpos .+ target.radius) .< 0) .&& (dir .< 0))
         return false, NaN32
     end
-
+    =#
 
     a::T = dot(dir, dpos)
     pp_norm_sq::T = sum(dpos .^ 2)

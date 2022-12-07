@@ -10,7 +10,7 @@ using StructArrays
 #global_logger(debuglogger)
 
 
-distance = 80.0f0
+distance = 20.0f0
 medium = make_cascadia_medium_properties(0.99f0)
 n_pmts = 16
 pmt_area = Float32((75e-3 / 2)^2 * π)
@@ -18,8 +18,12 @@ target_radius = 0.21f0
 
 suite = BenchmarkGroup()
 n_photons = exp10.(5:0.5:11)
-target = DetectionSphere(@SVector[0.0f0, 0.0f0, distance], target_radius, n_pmts, pmt_area, UInt16(1))
-target2 = DetectionSphere(@SVector[0.0f0, 5.0f0, distance], target_radius, n_pmts, pmt_area, UInt16(2))
+
+targets = [
+    DetectionSphere(@SVector[0.0f0, Float32(i * 5), distance], target_radius, n_pmts, pmt_area, UInt16(i))
+    for i in 1:20
+]
+
 
 
 
@@ -27,6 +31,24 @@ spectrum = CherenkovSpectrum((300.0f0, 800.0f0), 30, medium)
 nph = 1E9
 source = PointlikeIsotropicEmitter(SA[0.0f0, 0.0f0, 0.0f0], 0.0f0, Int64(ceil(nph)))
 
+suite = BenchmarkGroup()
+for i in 1:20
+
+    suite[i] = CUDA.@sync @benchmarkable NeutrinoTelescopes.PhotonPropagationCuda.run_photon_prop_no_local_cache(
+        [source], targets[1:$i], medium, spectrum; time_type=Float32)
+
+end
+
+tune!(suite)
+results = run(suite, seconds=20)
+plot(results)
+
+medr = median(results)
+
+p = scatter(collect(keys(medr)), getproperty.(values(medr), (:time,)) ./ (1E9),
+    xscale=:log10,  ylim=(1E-1, 10),
+    xlabel="Number of Targets", ylabel="Time per Photon (ns)",
+    label="", dpi=150, title=CUDA.name(CUDA.device()))
 
 
 function run_old(source, target, medium, spectrum)
