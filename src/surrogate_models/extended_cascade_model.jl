@@ -475,23 +475,4 @@ end
 read_hdf(fname::String, nsel, rng) = read_hdf([fname], nsel, rng)
 
 
-function _make_traf_pipeline()
-    catf = CatFeatureSelector()
-    ohe = OneHotEncoder()
-    norm = SKPreprocessor("Normalizer")
-    numf = NumFeatureSelector()
-
-    traf = @pipeline (numf |> norm) + (catf |> ohe)
-    return traf
-end
-
-function fit_trafo_pipeline(labels)
-    traf = _make_traf_pipeline()
-    tr_labels = fit_transform!(traf, labels) |> Matrix |> adjoint
-    return tr_labels, traf
-end
-
-
-
-
 end
