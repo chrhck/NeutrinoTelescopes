@@ -10,7 +10,6 @@ using Random
 using EarlyStopping
 using DataFrames
 using CategoricalArrays
-using AutoMLPipeline
 using HDF5
 using StatsBase
 using LinearAlgebra
@@ -69,8 +68,8 @@ function RQNormFlow(K::Integer,
     dropout=0.3,
     non_linearity=relu,
     add_log_expec=false,
-    split_final=false,
-    )
+    split_final=false
+)
 
     model = []
     push!(model, Dense(24 => hidden_structure[1], non_linearity))
@@ -83,16 +82,16 @@ function RQNormFlow(K::Integer,
     # 3 K + 1 for spline, 1 for shift, 1 for scale, 1 for log-expectation
     n_spline_params = 3 * K + 1
     n_flow_params = n_spline_params + 2
-    
-    
+
+
     if add_log_expec && split_final
         final = Parallel(vcat,
-                        Dense(hidden_structure[end] => n_flow_params),
-                        Dense(hidden_structure[end] => 1)
+            Dense(hidden_structure[end] => n_flow_params),
+            Dense(hidden_structure[end] => 1)
         )
     elseif add_log_expec && !split_final
-        #zero_init(out, in) = vcat(zeros(out-3, in), zeros(1, in), ones(1, in), fill(1/in, 1, in)) 
-        final =  Dense(hidden_structure[end] => n_flow_params + 1)
+        #zero_init(out, in) = vcat(zeros(out-3, in), zeros(1, in), ones(1, in), fill(1/in, 1, in))
+        final = Dense(hidden_structure[end] => n_flow_params + 1)
     else
         final = Dense(hidden_structure[end] => n_flow_params)
     end
@@ -136,7 +135,7 @@ function log_likelihood_with_poisson(x::NamedTuple, model::RQNormFlow)
     # poisson: log(exp(-lambda) * lambda^k)
     poiss_f = x[:nhits] .* log_expec .- exp.(log_expec) .- loggamma.(x[:nhits] .+ 1.0)
 
-    return -(sum(logpdf_eval)  + sum(poiss_f)) /  length(x[:tres])
+    return -(sum(logpdf_eval) + sum(poiss_f)) / length(x[:tres])
 end
 
 
@@ -171,9 +170,9 @@ function setup_time_expectation_model(hparams::RQNormFlowHParams)
     non_lin = non_lins[hparams.non_linearity]
 
     model = RQNormFlow(
-        hparams.K, -20., 100., hidden_structure, dropout=hparams.dropout, non_linearity=non_lin,
+        hparams.K, -20.0, 100.0, hidden_structure, dropout=hparams.dropout, non_linearity=non_lin,
         add_log_expec=true
-        )
+    )
     return model
 end
 
@@ -210,7 +209,7 @@ function train_time_expectation_model(data, use_gpu=true, use_early_stopping=tru
     train_loader, test_loader = setup_dataloaders(data, hparams)
 
     device = use_gpu ? gpu : cpu
-    model, final_test_loss  = train_model!(opt, train_loader, test_loader, model, log_likelihood_with_poisson, hparams, lg, device, use_early_stopping)
+    model, final_test_loss = train_model!(opt, train_loader, test_loader, model, log_likelihood_with_poisson, hparams, lg, device, use_early_stopping)
 
     return model, final_test_loss, hparams, opt
 end
@@ -220,7 +219,7 @@ end
 function fill_param_dict!(dict, m, prefix)
     if m isa Chain
         for (i, layer) in enumerate(m.layers)
-            fill_param_dict!(dict, layer, prefix*"layer_"*string(i)*"/"*string(layer)*"/")
+            fill_param_dict!(dict, layer, prefix * "layer_" * string(i) * "/" * string(layer) * "/")
         end
     else
         for fieldname in fieldnames(typeof(m))
@@ -238,21 +237,21 @@ sqnorm(x) = sum(abs2, x)
 function train_model!(opt, train, test, model, loss_function, hparams, logger, device, use_early_stopping)
     model = model |> device
     pars = Flux.params(model)
-    
+
     if use_early_stopping
         stopper = EarlyStopper(Warmup(Patience(5); n=5), InvalidValue(), NumberSinceBest(n=10), verbosity=1)
     else
         stopper = EarlyStopper(Never(), verbosity=1)
     end
-    
+
     local loss
     local total_test_loss
-    
+
     @progress for epoch in 1:hparams.epochs
 
         Flux.trainmode!(model)
-        
-        total_train_loss = 0.
+
+        total_train_loss = 0.0
         for d in train
             d = d |> device
             gs = gradient(pars) do
@@ -274,17 +273,17 @@ function train_model!(opt, train, test, model, loss_function, hparams, logger, d
         total_test_loss = 0
         for d in test
             d = d |> device
-            total_test_loss += loss_function(d, model) 
+            total_test_loss += loss_function(d, model)
         end
-        total_test_loss  /= length(test)
+        total_test_loss /= length(test)
 
-        param_dict = Dict{String, Any}()
+        param_dict = Dict{String,Any}()
         fill_param_dict!(param_dict, model, "")
-        
-        
+
+
         with_logger(logger) do
             @info "loss" train = total_train_loss test = total_test_loss
-            @info "model" params=param_dict log_step_increment=0
+            @info "model" params = param_dict log_step_increment = 0
 
         end
         println("Epoch: $epoch, Train: $total_train_loss Test: $total_test_loss")
@@ -336,7 +335,7 @@ function preproc_labels(df, norm_dict=nothing)
     cond_labels = hcat(df[:, [:log_distance, :log_energy]], dir_cart, pos_cart)
 
     if isnothing(norm_dict)
-        norm_dict = Dict{String, Normalizer}()
+        norm_dict = Dict{String,Normalizer}()
         for col in names(cond_labels)
 
             _, tf = fit_normalizer!(cond_labels[!, col])
@@ -353,12 +352,12 @@ function preproc_labels(df, norm_dict=nothing)
 
     if "pmt_id" in names(df)
         df[!, :pmt_id] = categorical(df[:, :pmt_id], levels=1:16)
-        
+
         lev = levels(df[:, :pmt_id])
         lev_names = Symbol.(Ref("pmt_"), Int.(lev))
 
         one_hot = DataFrame((lev .== permutedims(df[:, :pmt_id]))', lev_names)
-       
+
         cond_labels = hcat(cond_labels, one_hot)
     end
     return cond_labels, norm_dict
@@ -368,7 +367,7 @@ end
 function _calc_flow_inputs(
     particles::AbstractVector{<:Particle},
     targets::AbstractVector{T},
-    traf) where {T <: MultiPMTDetector}
+    traf) where {T<:MultiPMTDetector}
 
     input_len = length(particles) * length(targets)
     n_pmt = get_pmt_count(T)
@@ -383,11 +382,11 @@ function _calc_flow_inputs(
         pos_theta=Vector{Float64}(undef, input_len * n_pmt),
         pos_phi=Vector{Float64}(undef, input_len * n_pmt),
         pmt_id=Vector{Int64}(undef, input_len * n_pmt))
-    
+
     li = LinearIndices((1:length(particles), 1:length(targets), 1:n_pmt))
 
     for i in eachindex(particles), j in eachindex(targets)
-        
+
         p = particles[i]
         t = targets[j]
 
@@ -425,12 +424,12 @@ end
 
 
 function calc_flow_inputs(particle::Particle, target::MultiPMTDetector, pmt_id::Integer, traf)
-    
+
     df_labels = _calc_flow_inputs([particle], [target], traf)
     mask = df_labels[:, :pmt_id] .== pmt_id
 
     trf_labels = AutoMLPipeline.transform(traf, preproc_labels(df_labels[mask, :]))
-    return  trf_labels |> Matrix |> adjoint
+    return trf_labels |> Matrix |> adjoint
 
 end
 
@@ -449,9 +448,9 @@ function read_hdf(fnames, nsel_frac=0.8, rng=nothing)
             if nsel_frac == 1
                 index_end = length(datasets)
             else
-                index_end = Int(ceil(length(datasets)*nsel_frac))
+                index_end = Int(ceil(length(datasets) * nsel_frac))
             end
-            
+
 
             for grpn in datasets[1:index_end]
                 grp = fid["pmt_hits"][grpn]
@@ -460,7 +459,7 @@ function read_hdf(fnames, nsel_frac=0.8, rng=nothing)
             end
         end
     end
-    
+
     rnd_ixs = shuffle(1:length(all_hits))
 
     all_hits = all_hits[rnd_ixs]
@@ -470,7 +469,7 @@ function read_hdf(fnames, nsel_frac=0.8, rng=nothing)
     tres = hits_df[:, :tres]
     nhits = hits_df[:, :hits_per_pmt]
     cond_labels, tf_dict = preproc_labels(hits_df)
-    return tres, nhits, cond_labels |>Matrix |>Adjoint, tf_dict
+    return tres, nhits, cond_labels |> Matrix |> Adjoint, tf_dict
 end
 
 read_hdf(fname::String, nsel, rng) = read_hdf([fname], nsel, rng)
@@ -481,7 +480,7 @@ function _make_traf_pipeline()
     ohe = OneHotEncoder()
     norm = SKPreprocessor("Normalizer")
     numf = NumFeatureSelector()
-    
+
     traf = @pipeline (numf |> norm) + (catf |> ohe)
     return traf
 end
