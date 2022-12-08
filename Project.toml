@@ -85,6 +85,7 @@ WaterLily = "ed894a53-35f9-47f1-b17f-85db9237eebd"
 Zygote = "e88e6eb3-aa80-5325-afca-941959d7151f"
 
 [compat]
+AMLPipelineBase = "0.1"
 Arrow = "2"
 BenchmarkTools = "1"
 CUDA = "3"
