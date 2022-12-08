@@ -1,3 +1,6 @@
 /Manifest.toml
 *.pt
 /.CondaPkg
+/tensorboard_logs
+.vscode
+/data
