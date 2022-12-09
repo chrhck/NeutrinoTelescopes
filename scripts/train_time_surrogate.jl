@@ -30,7 +30,7 @@ tres, nhits, cond_labels, tf_dict = read_hdf(fnames, nsel_frac, rng)
 
 
 hob = @hyperopt for i = 100,
-    sampler = CLHSampler(dims=[Continuous(), Categorical(4), Continuous(), Categorical(16), Categorical(4)]),
+    sampler = CLHSampler(dims=[Continuous(), Categorical(4), Continuous(), Categorical(11), Categorical(4)]),
     lr = 10 .^ LinRange(-4, -2, 100),
     mlp_layer_size = [256, 512, 768, 1024],
     dropout = LinRange(0, 0.5, 100),
@@ -53,3 +53,5 @@ hob = @hyperopt for i = 100,
 end
 
 print(hob)
+
+5:15
