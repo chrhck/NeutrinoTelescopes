@@ -136,7 +136,7 @@ function log_likelihood_with_poisson(x::NamedTuple, model::RQNormFlow)
     poiss_f = x[:nhits] .* log_expec .- exp.(log_expec) .- loggamma.(x[:nhits] .+ 1.0)
 
     # correct for overcounting the poisson factor
-    poiss_f ./= x[:nhits]
+    poiss_f = poiss_f ./ x[:nhits]
 
     return -(sum(logpdf_eval) + sum(poiss_f)) / length(x[:tres])
 end
