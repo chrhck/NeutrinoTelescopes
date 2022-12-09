@@ -25,7 +25,7 @@ fnames = [
 
 
 rng = MersenneTwister(31338)
-nsel_frac = 0.1
+nsel_frac = 0.3
 tres, nhits, cond_labels, tf_dict = read_hdf(fnames, nsel_frac, rng)
 
 
@@ -50,8 +50,8 @@ hob = @hyperopt for i = 100,
         non_linearity=:relu,
         batch_size=batch_size,
         seed=1,)
+
+    model_loss
 end
 
 print(hob)
-
-5:15
