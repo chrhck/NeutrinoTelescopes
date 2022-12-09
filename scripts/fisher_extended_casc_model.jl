@@ -18,10 +18,13 @@ dir_theta = deg2rad(20f0)
 dir_phi = deg2rad(50f0)
 dir = sph_to_cart(dir_theta, dir_phi)
 
+
 pmt_area = Float32((75e-3 / 2)^2 * π)
 target_radius = 0.21f0
 
+
 p = Particle(pos, dir, 0.0f0, Float32(1E5), PEMinus)
+
 target = MultiPMTDetector(
     @SVector[0.0f0, 0.0f0, 0.0f0],
     target_radius,
@@ -29,6 +32,7 @@ target = MultiPMTDetector(
     make_pom_pmt_coordinates(Float32),
     UInt16(1)
 )
+
 
 wl_range = (300.0f0, 800.0f0)
 medium = make_cascadia_medium_properties(0.99f0)
@@ -78,10 +82,8 @@ for i in 1:16
     @show sum(hits[mask, :total_weight]), exp.( log_expec[1, i])
 end
 
+
 fig
 end
 
-lines()
-lines(times, exp.(log_pdf[:, 2]))
-lines(times, exp.(log_pdf[:, 3]))
-lines(times, exp.(log_pdf[:, 4]))
+

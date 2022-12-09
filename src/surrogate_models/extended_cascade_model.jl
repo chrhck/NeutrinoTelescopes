@@ -369,6 +369,7 @@ function _calc_flow_inputs(
     targets::AbstractVector{T}
 ) where {T<:MultiPMTDetector}
 
+
     input_len = length(particles) * length(targets)
     n_pmt = get_pmt_count(T)
 
@@ -430,6 +431,7 @@ function calc_flow_inputs(particle::Particle, target::MultiPMTDetector, pmt_id::
     mask = df_labels[:, :pmt_id] .== pmt_id
 
     trf_labels, _ = preproc_labels(df_labels[mask, :], traf_dict)
+
     return trf_labels |> Matrix |> adjoint
 
 end
