@@ -7,7 +7,6 @@ using CUDA
 using BenchmarkTools
 using Random
 using TensorBoardLogger
-using AutoMLPipeline
 
 using StatsBase
 using Hyperopt
