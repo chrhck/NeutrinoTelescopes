@@ -395,6 +395,7 @@ Evaluate logpdf of scaled, shifted, rq-spline applied to normal distribution
 """
 function eval_transformed_normal_logpdf(y, params, range_min, range_max)
 
+    size(params)
     @assert length(y) == size(params, 2)
 
     spline_params = params[1:end-2, :]
@@ -410,7 +411,7 @@ function eval_transformed_normal_logpdf(y, params, range_min, range_max)
 
     normal_logpdf = -0.5 .* (x .^ 2 .+ log(2 * pi))
 
-    normal_logpdf = -log.(scale) .- 0.5 .* (log(2*π) .+ ((x .- shift) ./ scale).^2)
+    normal_logpdf = -log.(scale) .- 0.5 .* (log(2 * π) .+ ((x .- shift) ./ scale) .^ 2)
     #normal_logpdf =  logpdf.(Normal(0, 1), x)
 
     return normal_logpdf .+ logdet_spline

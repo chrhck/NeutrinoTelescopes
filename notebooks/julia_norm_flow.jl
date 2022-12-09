@@ -18,13 +18,14 @@ using BSON: @save, @load
 
 
 fnames = [
-    joinpath(@__DIR__, "../assets/photon_table_extended_2.hd5"),
-    joinpath(@__DIR__, "../assets/photon_table_extended_3.hd5"),
-    joinpath(@__DIR__, "../assets/photon_table_extended_4.hd5"),
-    joinpath(@__DIR__, "../assets/photon_table_extended_5.hd5")
+    joinpath(@__DIR__, "../data/photon_table_extended_2.hd5"),
+    joinpath(@__DIR__, "../data/photon_table_extended_3.hd5"),
+    joinpath(@__DIR__, "../data/photon_table_extended_4.hd5"),
+    joinpath(@__DIR__, "../data/photon_table_extended_5.hd5"),
+    joinpath(@__DIR__, "../data/photon_table_extended_6.hd5")
     ]
 rng = MersenneTwister(31338)
-nsel_frac = 0.9
+nsel_frac = 1
 tres, nhits, cond_labels, tf_dict = read_hdf(fnames, nsel_frac, rng)
 
 model, model_loss, hparams, opt = train_time_expectation_model(
@@ -38,7 +39,7 @@ model, model_loss, hparams, opt = train_time_expectation_model(
         dropout=0,
         non_linearity=:relu,
         batch_size=1000,
-        seed=1)
+        seed=1,)
 
 model_path = joinpath(@__DIR__, "../assets/rq_spline_model.bson")
 model = cpu(model)
