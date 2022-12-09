@@ -242,7 +242,7 @@ function train_model!(opt, train, test, model, loss_function, hparams, logger, d
     pars = Flux.params(model)
 
     if use_early_stopping
-        stopper = EarlyStopper(Warmup(Patience(5); n=5), InvalidValue(), NumberSinceBest(n=10), verbosity=1)
+        stopper = EarlyStopper(Warmup(Patience(5); n=5), InvalidValue(), NumberSinceBest(n=7), verbosity=1)
     else
         stopper = EarlyStopper(Never(), verbosity=1)
     end
@@ -428,7 +428,7 @@ function calc_flow_inputs(
 end
 
 
-function calc_flow_inputs(particle::Particle, target::MultiPMTDetector, pmt_id::Integer, traf)
+function calc_flow_inputs(particle::Particle, target::MultiPMTDetector, pmt_id::Integer, traf_dict)
 
     df_labels = _calc_flow_inputs([particle], [target])
     mask = df_labels[:, :pmt_id] .== pmt_id
@@ -436,7 +436,6 @@ function calc_flow_inputs(particle::Particle, target::MultiPMTDetector, pmt_id::
     trf_labels, _ = preproc_labels(df_labels[mask, :], traf_dict)
 
     return trf_labels |> Matrix |> adjoint
-
 end
 
 

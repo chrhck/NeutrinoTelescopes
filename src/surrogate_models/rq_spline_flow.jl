@@ -81,6 +81,7 @@ using Distributions
 using NNlib
 
 export constrain_spline_params, rqs_univariate, inv_rqs_univariate, eval_transformed_normal_logpdf
+export sample_flow
 
 @inline function my_where(X, A, B)
     broadcast(A, B, X) do a, b, x
@@ -388,19 +389,23 @@ function inv_rqs_univariate(x_pos::AbstractMatrix, y_pos::AbstractMatrix, knot_s
     return x, logdet
 end
 
+
+function _split_params(params)
+
+    spline_params = params[1:end-2, :]
+    shift = params[end-1, :]
+    scale = sigmoid.(params[end, :]) .* 100
+    return spline_params, shift, scale
+end
+
 """
     function eval_transformed_normal_logpdf(y, params, range_min, range_max)
 
 Evaluate logpdf of scaled, shifted, rq-spline applied to normal distribution
 """
 function eval_transformed_normal_logpdf(y, params, range_min, range_max)
-
-    size(params)
     @assert length(y) == size(params, 2)
-
-    spline_params = params[1:end-2, :]
-    shift = params[end-1, :]
-    scale = sigmoid.(params[end, :]) .* 100
+    spline_params, shift, scale = _split_params(params)
 
     #scale = 5.
     #shift = 0.
@@ -416,4 +421,32 @@ function eval_transformed_normal_logpdf(y, params, range_min, range_max)
 
     return normal_logpdf .+ logdet_spline
 end
+
+
+function repeat_for(x, n)
+    out = similar(x, (size(x, 1), sum(n)))
+    ix = firstindex(param_vec, 2)
+    for i in eachindex(n)
+        n = n[i]
+        out[:, ix:ix+(n-1)] .= x[:, i]
+        ix += n
+    end
+    return out
+end
+
+function sample_flow(params, range_min, range_max, n_per_param)
+
+    @assert length(n_per_param) == size(params, 2)
+
+
+
+    spline_params, shift, scale = _split_params(param_vec)
+    x_pos, y_pos, knot_slopes = constrain_spline_params(spline_params, range_min, range_max)
+    x = randn(size(param_vec, 2)) .* scale .+ shift
+    y, _ = rqs_univariate(x_pos, y_pos, knot_slopes, x)
+    return y
+end
+
+
+
 end
