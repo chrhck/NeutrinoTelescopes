@@ -30,11 +30,11 @@ tres, nhits, cond_labels, tf_dict = read_hdf(fnames, nsel_frac, rng)
 
 
 hob = @hyperopt for i = 100,
-    sampler = CLHSampler(dims=[Continuous(), Categorical(4), Continuous(), Continuous(), Categorical(4)]),
+    sampler = CLHSampler(dims=[Continuous(), Categorical(4), Continuous(), Categorical(16), Categorical(4)]),
     lr = 10 .^ LinRange(-4, -2, 100),
     mlp_layer_size = [256, 512, 768, 1024],
     dropout = LinRange(0, 0.5, 100),
-    K = LinRange(5, 15, 11),
+    K = 5:15,
     batch_size = [512, 1024, 2048, 4096]
 
     model, model_loss, hparams, opt = train_time_expectation_model(
