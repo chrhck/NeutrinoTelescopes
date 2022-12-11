@@ -21,7 +21,7 @@ pmt_area = Float32((75e-3 / 2)^2 * π)
 target_radius = 0.21f0
 
 begin
-    pos = SA[0.0f0, 30.0f0, 20.0f0]
+    pos = SA[0.0f0, 10.0f0, 20.0f0]
     dir_theta = deg2rad(50.0f0)
     dir_phi = deg2rad(50.0f0)
     dir = sph_to_cart(dir_theta, dir_phi)
