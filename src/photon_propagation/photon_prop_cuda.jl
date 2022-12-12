@@ -588,8 +588,8 @@ function cuda_propagate_photons!(
             CUDA.@cuassert stack_idx <= length(out_positions) "Stack overflow"
 
             out_positions[stack_idx] = pos
-            out_directions[stack_idx] = initial_dir
-            out_initial_directions[stack_idx] = dir
+            out_directions[stack_idx] = dir
+            out_initial_directions[stack_idx] = initial_dir
             out_dist_travelled[stack_idx] = dist_travelled
             out_wavelengths[stack_idx] = wavelength
             out_times[stack_idx] = time
@@ -791,7 +791,7 @@ function run_photon_prop_no_local_cache(
         Vector(positions[1:stack_idx-1]),
         Vector(directions[1:stack_idx-1]),
         Vector(initial_directions[1:stack_idx-1]),
-        Vector(wavelengths[1:stack_idx-1])        ,
+        Vector(wavelengths[1:stack_idx-1]),
         Vector(times[1:stack_idx-1]),
         Vector(dist_travelled[1:stack_idx-1]),
         fill(target.module_id, stack_idx - 1)))
@@ -896,10 +896,10 @@ function make_hits_from_photons(
         h = DataFrame(copy(subdf[mask, :]))
         h[!, :pmt_id] .= pmt_ids[mask]
         push!(hits, h)
-    
+
     end
 
-    return reduce(vcat, hits) 
+    return reduce(vcat, hits)
 
 end
 
@@ -912,7 +912,7 @@ function calc_time_residual!(df::AbstractDataFrame, setup::PhotonPropSetup)
         target = targ_id_map[key.module_id]
         distance = norm(setup.sources[1].position .- target.position)
         tgeo = (distance - target.radius) ./ (c_vac / refractive_index(800.0f0, setup.medium))
-        
+
         subdf[!, :tres] = (subdf[:, :time] .- tgeo)
     end
 
