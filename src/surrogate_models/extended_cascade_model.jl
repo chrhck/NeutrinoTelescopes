@@ -242,7 +242,7 @@ function train_model!(opt, train, test, model, loss_function, hparams, logger, d
     pars = Flux.params(model)
 
     if use_early_stopping
-        stopper = EarlyStopper(Warmup(Patience(5); n=5), InvalidValue(), NumberSinceBest(n=7), verbosity=1)
+        stopper = EarlyStopper(Warmup(Patience(5); n=3), InvalidValue(), NumberSinceBest(n=5), verbosity=1)
     else
         stopper = EarlyStopper(Never(), verbosity=1)
     end
