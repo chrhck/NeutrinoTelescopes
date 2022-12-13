@@ -429,8 +429,10 @@ end
 struct PencilEmitter{T} <: PhotonSource{T}
     position::SVector{3,T}
     direction::SVector{3,T}
+    beam_divergence::T
     time::T
     photons::Int64
+    
 end
 
 struct PointlikeIsotropicEmitter{T} <: PhotonSource{T}

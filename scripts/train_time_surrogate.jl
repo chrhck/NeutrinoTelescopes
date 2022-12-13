@@ -56,5 +56,7 @@ hob = @hyperopt for i = nit,
     model_loss
 end
 
-outpath = joinpath(@__DIR__, "../assets/time_surrogate_hyperopt.bson")
-@save outpath hob
+hob
+
+ref = Plots.plot(hob)
+savefig(ref, joinpath(@__DIR__, "../figures/hyperopt.png"))

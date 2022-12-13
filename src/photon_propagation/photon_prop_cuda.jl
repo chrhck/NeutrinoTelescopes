@@ -36,13 +36,15 @@ mutable struct PhotonPropSetup{SV<:AbstractVector{<:PhotonSource},ST<:AbstractVe
     targets::ST
     medium::M
     spectrum::C
+    seed::Int64
 end
 
 PhotonPropSetup(
     source::PhotonSource,
     target::PhotonTarget,
     medium::MediumProperties,
-    spectrum::Spectrum) = PhotonPropSetup([source], [target], medium, spectrum)
+    spectrum::Spectrum,
+    seed) = PhotonPropSetup([source], [target], medium, spectrum, Int64(seed))
 
 
 """
@@ -157,7 +159,15 @@ end
 
 @inline function initialize_photon_state(source::PencilEmitter{T}, ::MediumProperties, spectrum::Spectrum) where {T<:Real}
     wl = initialize_wavelength(spectrum)
-    PhotonState(source.position, source.direction, source.time, wl)
+    if source.beam_divergence > 0
+
+        theta = sqrt(uniform(zero(T), source.beam_divergence^2))
+        phi = uniform(zero(T), T(2 * pi))
+        dir = rot_from_ez_fast(source.direction, sph_to_cart(theta, phi))
+    else
+        dir = source.direction
+    end
+    PhotonState(source.position, dir, source.time, wl)
 end
 
 
@@ -450,7 +460,7 @@ function cuda_propagate_photons!(
         for nstep in Int32(1):steps
 
             eta = rand(T)
-            step_size::Float32 = -CUDA.log(eta) * sca_len
+            step_size::T = -CUDA.log(eta) * sca_len
 
             # Check intersection with module
 
@@ -562,7 +572,7 @@ function cuda_propagate_photons!(
         for nstep in Int32(1):steps
 
             eta = rand(T)
-            step_size::Float32 = -CUDA.log(eta) * sca_len
+            step_size::T = -CUDA.log(eta) * sca_len
 
             # Check intersection with module
 
@@ -727,7 +737,8 @@ function run_photon_prop_no_local_cache(
     sources::AbstractVector{<:PhotonSource},
     targets::AbstractVector{<:PhotonTarget},
     medium::MediumProperties,
-    spectrum::Spectrum;
+    spectrum::Spectrum,
+    seed::Int64;
     time_type::Type=Float32)
     avail_mem = CUDA.totalmem(collect(CUDA.devices())[1])
     max_total_stack_len = calculate_max_stack_size(0.7 * avail_mem, Float32, time_type)
@@ -740,7 +751,7 @@ function run_photon_prop_no_local_cache(
     targets = CuVector(targets)
 
     kernel = @cuda launch = false cuda_propagate_photons!(
-        photon_hits, stack_idx, n_ph_sim, err_code, Int64(0),
+        photon_hits, stack_idx, n_ph_sim, err_code, seed,
         sources[1], spectrum, targets, medium)
 
     blocks, threads = CUDA.launch_configuration(kernel.fun)
@@ -748,7 +759,7 @@ function run_photon_prop_no_local_cache(
     # Can assign photons to sources by keeping track of stack_idx for each source
     for source in sources
         kernel(
-            photon_hits, stack_idx, n_ph_sim, err_code, Int64(0),
+            photon_hits, stack_idx, n_ph_sim, err_code, seed,
             source, spectrum, targets, medium; threads=threads, blocks=blocks)
     end
 
@@ -763,17 +774,18 @@ end
 function run_photon_prop_no_local_cache(
     sources::AbstractVector{<:PhotonSource},
     target::PhotonTarget,
-    medium::MediumProperties,
-    spectrum::Spectrum;
-    time_type::Type=Float32)
+    medium::MediumProperties{T},
+    spectrum::Spectrum,
+    seed::Int64;
+    time_type::Type=Float32) where {T}
     avail_mem = CUDA.totalmem(collect(CUDA.devices())[1])
-    max_total_stack_len = calculate_max_stack_size(0.7 * avail_mem, Float32, time_type)
-    positions, directions, initial_directions, wavelengths, dist_travelled, times, stack_idx, n_ph_sim = initialize_photon_arrays(max_total_stack_len, Float32, time_type)
+    max_total_stack_len = calculate_max_stack_size(0.7 * avail_mem, T, time_type)
+    positions, directions, initial_directions, wavelengths, dist_travelled, times, stack_idx, n_ph_sim = initialize_photon_arrays(max_total_stack_len, T, time_type)
     err_code = CuVector(zeros(Int32, 1))
 
 
     kernel = @cuda launch = false PhotonPropagationCuda.cuda_propagate_photons!(
-        positions, directions, initial_directions, wavelengths, dist_travelled, times, stack_idx, n_ph_sim, err_code, Int64(0),
+        positions, directions, initial_directions, wavelengths, dist_travelled, times, stack_idx, n_ph_sim, err_code, seed,
         sources[1], spectrum, target, medium)
 
     blocks, threads = CUDA.launch_configuration(kernel.fun)
@@ -781,7 +793,7 @@ function run_photon_prop_no_local_cache(
     # Can assign photons to sources by keeping track of stack_idx for each source
     for source in sources
         kernel(
-            positions, directions, initial_directions, wavelengths, dist_travelled, times, stack_idx, n_ph_sim, err_code, Int64(0),
+            positions, directions, initial_directions, wavelengths, dist_travelled, times, stack_idx, n_ph_sim, err_code, seed,
             source, spectrum, target, medium; threads=threads, blocks=blocks)
     end
 
@@ -805,10 +817,10 @@ function propagate_photons(setup::PhotonPropSetup)
 
     if length(setup.targets) == 1
         hits, n_ph_sim = run_photon_prop_no_local_cache(
-            setup.sources, setup.targets[1], setup.medium, setup.spectrum)
+            setup.sources, setup.targets[1], setup.medium, setup.spectrum, setup.seed)
     else
         hits, n_ph_sim = run_photon_prop_no_local_cache(
-            setup.sources, setup.targets, setup.medium, setup.spectrum)
+            setup.sources, setup.targets, setup.medium, setup.spectrum, setup.seed)
     end
 
     df = DataFrame(hits)
@@ -816,11 +828,11 @@ function propagate_photons(setup::PhotonPropSetup)
     return df
 end
 
-
+#=
 function propagate_photons_single_target(setup::PhotonPropSetup)
 
     positions, directions, wavelengths, dist_travelled, times, stack_idx, n_ph_sim = run_photon_prop_no_local_cache(
-        setup.sources, setup.target, setup.medium, setup.spectrum)
+        setup.sources, setup.target, setup.medium, setup.spectrum, setup.seed)
 
     stack_idx = Vector(stack_idx)[1]
     n_ph_sim = Vector(n_ph_sim)[1]
@@ -845,7 +857,7 @@ function propagate_photons_single_target(setup::PhotonPropSetup)
 
     return df
 end
-
+=#
 
 function calc_total_weight!(df::AbstractDataFrame, setup::PhotonPropSetup)
 
