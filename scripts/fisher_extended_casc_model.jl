@@ -11,6 +11,7 @@ using LinearAlgebra
 using DataFrames
 using Zygote
 using PoissonRandom
+using SpecialFunctions
 model_path = joinpath(@__DIR__, "../assets/rq_spline_model.bson")
 
 @load model_path model hparams opt tf_dict
@@ -89,12 +90,13 @@ pois_expec[mask]
 flow_params[:, mask]
 
 
-
-
 samples = sample_flow(flow_params[:, mask], model.range_min, model.range_max, pois_expec[mask])
 
-split_by(samples, pois_expec[mask])
-hist(samples[1, :], bins=-10:5:100)
+
+function sum_by(itr, n)
+    result = 0
+    ix = firstindex(x, 2)
+
 
 
 
@@ -110,17 +112,47 @@ function likelihood(energy)
     pois_expec = pois_rand.(expec)
     mask = pois_expec .> 0
 
-    input[:, mask]
+    non_zero_expec = pois_expec[mask]
+    samples = sample_flow(flow_params[:, mask], model.range_min, model.range_max, non_zero_expec)
 
-    samples = sample_flow(flow_params[:, mask], model.range_min, model.range_max, pois_expec[mask])
+    log_pdf, log_expec = model(samples, repeat_for(input[:, mask], non_zero_expec), true)
+    lhs_per_pmt = split_by(log_pdf, non_zero_expec)
+    log_expec_per_pmt = first.(split_by(log_expec, non_zero_expec))
 
-    @show size(samples), size(input)
+    poiss_f = non_zero_expec .* log_expec_per_pmt .- exp.(log_expec_per_pmt) .- loggamma.(non_zero_expec .+ 1.0)
 
-    log_pdf, log_expec = model(samples, input[:, mask], true)
+    #ids = collect(1:16)[mask]
+    #return lhs_per_pmt, poiss_f, ids
+
+    return sum.(lhs_per_pmt) .+ poiss_f
+
 end
+
+
 
 
 likelihood(1E4)
 
 
+lh_per_pmt(x) = sum.(x[1]) .+ x[2]
+
+
+lhs = [likelihood(1E4)[1][1] for i in 1:10000]
+hist(((reduce(vcat, .-lhs))))
+
+
+
+
+
+first.([[1,2], [1]])
+    
+
+
+
+
+
+
 Zygote.gradient()
+
+repeat_for([1 2; 1 2], [0, 4])
+[1 2; 1 2]

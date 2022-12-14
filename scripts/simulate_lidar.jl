@@ -93,6 +93,7 @@ run_sim(; parsed_args...)
 
 
 
+DataFrame(read_parquet(path))
 #=
 photons_sav = DataFrame(read_parquet("data/lidar_photons.parquet"))
 photons_sav
