@@ -280,6 +280,31 @@ end
 
 end
 
+@inline function check_intersection(::Rectangular, target::PhotonTarget, pos::SVector{3,T}, dir::SVector{3,T}, step_size::T) where {T<:Real}
+
+    dir_normal = dir[3]
+
+    if dir_normal == 0
+        return false, NaN32
+    end
+
+    d = (target.position[3] - pos[3]) / dir_normal
+
+    if (d < 0) | (d > step_size)
+        return false, NaN32
+    end
+
+    isec = (abs((pos[1] + dir[1] * d) - target.position[1]) < target.length_x) & (abs((pos[2] + dir[2] * d) - target.position[2]) < target.length_y)
+
+    if isec
+        return true, d
+    else
+        return false, NaN32
+    end
+   
+end
+
+
 @inline function check_intersection(target::T, pos, dir, step_size) where {T<:PhotonTarget}
     return check_intersection(geometry_type(T), target, pos, dir, step_size)
 end

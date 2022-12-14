@@ -42,7 +42,7 @@ begin
 
     source = ExtendedCherenkovEmitter(p, medium, wl_range)
 
-    photon_setup = PhotonPropSetup([source], [target], medium, spectrum)
+    photon_setup = PhotonPropSetup([source], [target], medium, spectrum, 1)
     photons = propagate_photons(photon_setup)
 
     calc_total_weight!(photons, photon_setup)
@@ -89,22 +89,12 @@ pois_expec[mask]
 flow_params[:, mask]
 
 
-function split_by(x, n)
-    result = Vector{Vector{eltype(x)}}()
-    start = firstindex(x)
-    for l in n
-        push!(result, x[start:start+l-1])
-        start += l
-    end
 
-    return result
-end
 
 samples = sample_flow(flow_params[:, mask], model.range_min, model.range_max, pois_expec[mask])
 
-
-size(iy)
-hist(samples[11, :], bins=-10:5:100)
+split_by(samples, pois_expec[mask])
+hist(samples[1, :], bins=-10:5:100)
 
 
 
@@ -120,10 +110,17 @@ function likelihood(energy)
     pois_expec = pois_rand.(expec)
     mask = pois_expec .> 0
 
+    input[:, mask]
+
     samples = sample_flow(flow_params[:, mask], model.range_min, model.range_max, pois_expec[mask])
-    log_pdf, log_expec = model(repeat(times, size(input, 2)), repeat(input, inner=(1, length(times))), true)
+
+    @show size(samples), size(input)
+
+    log_pdf, log_expec = model(samples, input[:, mask], true)
 end
 
+
+likelihood(1E4)
 
 
 Zygote.gradient()

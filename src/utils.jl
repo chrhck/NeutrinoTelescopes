@@ -13,8 +13,42 @@ export CategoricalSetDistribution
 export sample_cherenkov_track_direction
 export rand_gamma
 export fwhm
+export repeat_for, split_by
 
 const GL10 = gausslegendre(10)
+
+"""
+    repeat_for(x::AbstractMatrix, n::AbstractVector)
+Repeat each slice along the second dimension of x for n times
+"""
+function repeat_for(x::AbstractMatrix, n::AbstractVector)
+    out = similar(x, (size(x, 1), sum(n)))
+    ix = firstindex(x, 2)
+    for i in eachindex(n)
+        ni = n[i]
+        out[:, ix:ix+(ni-1)] .= x[:, i]
+        ix += ni
+    end
+    return out
+end
+
+
+"""
+    split_by(x::AbstractVector, n::AbstractVector)
+Split vector x into parts, where the split indices are given by vector n
+
+"""
+function split_by(x::AbstractVector, n::AbstractVector)
+    result = Vector{Vector{eltype(x)}}()
+    start = firstindex(x)
+    for l in n
+        push!(result, x[start:start+l-1])
+        start += l
+    end
+
+    return result
+end
+
 
 """
     fast_linear_interp(x_eval::T, xs::AbstractVector{T}, ys::AbstractVector{T})

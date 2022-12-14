@@ -79,6 +79,7 @@ module RQSplineFlow
 using CUDA
 using Distributions
 using NNlib
+using ...Utils
 
 export constrain_spline_params, rqs_univariate, inv_rqs_univariate, eval_transformed_normal_logpdf
 export sample_flow
@@ -423,22 +424,11 @@ function eval_transformed_normal_logpdf(y, params, range_min, range_max)
 end
 
 
-function repeat_for(x, n)
-    out = similar(x, (size(x, 1), sum(n)))
-    ix = firstindex(param_vec, 2)
-    for i in eachindex(n)
-        n = n[i]
-        out[:, ix:ix+(n-1)] .= x[:, i]
-        ix += n
-    end
-    return out
-end
-
 function sample_flow(params, range_min, range_max, n_per_param)
 
     @assert length(n_per_param) == size(params, 2)
 
-
+    param_vec = repeat_for(params, n_per_param)
 
     spline_params, shift, scale = _split_params(param_vec)
     x_pos, y_pos, knot_slopes = constrain_spline_params(spline_params, range_min, range_max)

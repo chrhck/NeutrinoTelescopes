@@ -11,23 +11,33 @@ using Unitful
 medium = make_cascadia_medium_properties(0.99f0)
 mono_spectrum = Monochromatic(450.0f0)
 
-target_radius = (13/2)u"inch" /  u"m"  |> NoUnits |> Float32
-
-target = DetectionSphere(
+target = RectangularDetector(
     @SVector[0.0f0, 0.0f0, 0.0f0],
-    target_radius,
-    1,
-    #Float32(3E-6),
-    Float32(3E-4),
-    UInt16(1)
+    0.001f0,
+    0.003f0,
+    UInt16(1),
 )
 
-laser_pos = @SVector[0.0f0, 0.05f0, target_radius+0.05f0]
+
+laser_pos = @SVector[0.0f0, 0.05f0, 0f0]
 # Meet laser beam at 20m distance
+
+# TODO ISEC ASSUMES normal IS e_z
+function intersect_rect(photons, normal, center, dx, dy)
+    dirnormal = dot.(photons[:, :direction], Ref(normal))
+    d = dot.(Ref(center) .- photons[:, :position], Ref(normal)) ./ dirnormal
+
+    isec_point = reduce(hcat, photons[:, :position] .+ photons[:, :direction] .* d)
+    isec = (abs.(isec_point[1, :] .- center[1]) .< dx) .& (abs.((isec_point[2, :] .- center[2])) .< dy)
+    isec .&= (dirnormal .< 0)
+
+    return isec
+end
+
 
 
 all_photons = []
-for d in 20f0:20f0:100f0
+@progress for d in [20, 40, 60, 100, 150]
 
     beam_dir = @SVector[0f0, laser_pos[2] / (d - laser_pos[3]), 1f0]
     beam_dir = beam_dir ./ norm(beam_dir)
@@ -39,11 +49,10 @@ for d in 20f0:20f0:100f0
         beam_dir,
         beam_divergence,
         0.0f0,
-        Int64(1E11)
+        Int64(1E12)
     )
 
-
-    for i in 1:10
+    @progress for i in 1:2
         setup = PhotonPropSetup(prop_source_pencil_beam, target, medium, mono_spectrum, Int64(i))
         photons = propagate_photons(setup)
         calc_total_weight!(photons, setup)
@@ -56,46 +65,35 @@ end
 
 photons = reduce(vcat, all_photons)
 
+incident_angle = acos.(dot.(Ref(@SVector[0, 0, 1]), -photons[:, :direction]))
+mask = incident_angle .< deg2rad(0.4)
+photons[:, :fov] = mask
+
+photons_sav = photons[photons[:, :fov], [:time, :d, :abs_weight]]
+write_parquet("lidar_photons.parquet", photons_sav)
 
 
-rel_pos = (SVector{3, Float64}.(photons[:, :position]) .- (Ref(SVector{3, Float64}(target.position)))) ./ Float64(target.radius)
-opening_angle = asin(sqrt(target.pmt_area / π) / target.radius)
-rel_pos ./= norm.(rel_pos)
+photons[photons[:, :fov_and_hit], :position]
 
-mask = acos.(clamp.(dot.(rel_pos, Ref(@SVector[0, 0, 1])), -1, 1)) .< opening_angle
-
-photons[:, :rel_pos] = rel_pos
-photons[:, :hit] = mask
 
 begin
     fig = Figure()
-    ax = Axis(fig[1, 1], yscale=log10, limits=(0, 110, 1E-6, 1E-3))
-    bins = 0:5:100
-    for (key, grp) in pairs(groupby(photons, :d))
-
-        m = grp[:, :hit]
+    ga = fig[1, 1] = GridLayout(3, 3)
+    li = CartesianIndices((3, 3))
+    bins = 0:50:1500
+    for (i, (key, grp)) in enumerate(pairs(groupby(photons, :d)))
+        ax = Axis(ga[Tuple(li[i])...], xlabel="Time (ns)", ylabel="PDF", yscale=log10, limits=(-10, 1510, 1E-7, 1),
+                 title="Focus distance: $(key[1])m")
+        m = grp[:, :fov_and_hit]
         #m = trues(nrow(grp))
 
-        hist!(ax, grp[m, :time], weights=grp[m, :total_weight], bins=bins, normalization=:density, fillto = 1E-6)
+        hist!(ax, grp[m, :time], weights=grp[m, :total_weight], bins=bins, normalization=:pdf, fillto = 1E-7)
     end
     fig
 end
 
 
-    
-
-
-
-
-
-hist(photons[mask, :time], weight=photons[mask, :total_weight], bins=bins)
-photons_sav = photons[:, [:time, ]]
-
-scatter(photons[:, :time], acos.((clamp.(dot.(rel_pos, Ref(@SVector[0, 0, 1])), -1, 1))),
-        axis=(limits=(0, 1000, 0, 0.1), )
-)
-
-
+photons_sav = photons[photons[:, :fov_and_hit], [:time, :d, :abs_weight]]
 
 write_parquet("lidar_photons.parquet", photons_sav)
 
@@ -106,3 +104,8 @@ fig
 rel_pos[mask]
 
 photons[mask, :]
+
+absorption_length(450f0, medium)
+scattering_length(450f0, medium)
+
+0.3 / refractive_index(450f0, medium) * 500
