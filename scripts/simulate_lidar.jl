@@ -49,7 +49,7 @@ all_photons = []
         beam_dir,
         beam_divergence,
         0.0f0,
-        Int64(1E12)
+        Int64(1E11)
     )
 
     @progress for i in 1:2
@@ -72,7 +72,7 @@ photons[:, :fov] = mask
 photons_sav = photons[photons[:, :fov], [:time, :d, :abs_weight]]
 write_parquet("lidar_photons.parquet", photons_sav)
 
-
+#=
 photons[photons[:, :fov_and_hit], :position]
 
 
@@ -92,20 +92,4 @@ begin
     fig
 end
 
-
-photons_sav = photons[photons[:, :fov_and_hit], [:time, :d, :abs_weight]]
-
-write_parquet("lidar_photons.parquet", photons_sav)
-
-fig = scatter(photons[1:1000, :position])
-scatter!(photons[mask, :position], color=:red)
-fig
-
-rel_pos[mask]
-
-photons[mask, :]
-
-absorption_length(450f0, medium)
-scattering_length(450f0, medium)
-
-0.3 / refractive_index(450f0, medium) * 500
+=#
