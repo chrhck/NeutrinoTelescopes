@@ -52,7 +52,7 @@ all_photons = []
         Int64(1E11)
     )
 
-    @progress for i in 1:2
+    @progress for i in 1:10
         setup = PhotonPropSetup(prop_source_pencil_beam, target, medium, mono_spectrum, Int64(i))
         photons = propagate_photons(setup)
         calc_total_weight!(photons, setup)
