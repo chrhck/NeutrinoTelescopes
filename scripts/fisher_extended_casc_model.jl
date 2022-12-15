@@ -93,7 +93,7 @@ flow_params[:, mask]
 samples = sample_flow(flow_params[:, mask], model.range_min, model.range_max, pois_expec[mask])
 
 
-function sum_by(itr, n)
+function sum_by(x, n)
     result = 0
     ix = firstindex(x, 2)
 
