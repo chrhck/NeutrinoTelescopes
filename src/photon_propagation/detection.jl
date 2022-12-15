@@ -12,7 +12,7 @@ using ...Utils
 
 
 export PhotonTarget, DetectionSphere, p_one_pmt_acc, MultiPMTDetector, make_pom_pmt_coordinates, get_pmt_count
-export geometry_type, Spherical, Rectangular, RectangularDetector
+export geometry_type, Spherical, Rectangular, RectangularDetector, Circular, CircularDetector
 export check_pmt_hit
 export make_detector_cube, make_targets, make_detector_hex
 export area_acceptance
@@ -25,6 +25,7 @@ abstract type PixelatedTarget <: PhotonTarget end
 abstract type TargetShape end
 struct Spherical <: TargetShape end
 struct Rectangular <: TargetShape end
+struct Circular <: TargetShape end
 
 
 struct DetectionSphere{T<:Real} <: PhotonTarget
@@ -49,12 +50,19 @@ geometry_type(::Type{<:MultiPMTDetector}) = Spherical()
 
 # Assumes rectangle orientation is e_z
 struct RectangularDetector{T<:Real} <: PhotonTarget
-    position::SVector{3, T}
+    position::SVector{3,T}
     length_x::T
     length_y::T
     module_id::UInt16
 end
 geometry_type(::Type{<:RectangularDetector}) = Rectangular()
+
+struct CircularDetector{T<:Real} <: PhotonTarget
+    position::SVector{3,T}
+    radius::T
+    module_id::UInt16
+end
+geometry_type(::Type{<:CircularDetector}) = Circular()
 
 JSON.lower(d::MultiPMTDetector) = Dict(
     "pos" => d.position,
@@ -64,7 +72,7 @@ JSON.lower(d::MultiPMTDetector) = Dict(
 
 get_pmt_count(::DetectionSphere) = 1
 get_pmt_count(::MultiPMTDetector) = size(det.pmt_coordinates, 2)
-get_pmt_count(::Type{MultiPMTDetector{T, N, L}}) where {T, N, L} = N
+get_pmt_count(::Type{MultiPMTDetector{T,N,L}}) where {T,N,L} = N
 
 
 function get_pmt_positions(
@@ -154,8 +162,8 @@ function area_acceptance(::SVector{3,<:Real}, target::DetectionSphere)
 end
 
 area_acceptance(::SVector{3,<:Real}, ::MultiPMTDetector) = 1
-
 area_acceptance(::SVector{3,<:Real}, ::RectangularDetector) = 1
+area_acceptance(::SVector{3,<:Real}, ::CircularDetector) = 1
 
 struct PMTWavelengthAcceptance
     interpolation::Interpolations.Extrapolation

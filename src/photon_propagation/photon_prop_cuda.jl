@@ -301,7 +301,31 @@ end
     else
         return false, NaN32
     end
-   
+
+end
+
+@inline function check_intersection(::Circular, target::PhotonTarget, pos::SVector{3,T}, dir::SVector{3,T}, step_size::T) where {T<:Real}
+
+    dir_normal = dir[3]
+
+    if dir_normal == 0
+        return false, NaN32
+    end
+
+    d = (target.position[3] - pos[3]) / dir_normal
+
+    if (d < 0) | (d > step_size)
+        return false, NaN32
+    end
+
+    isec = ((pos[1] + dir[1] * d - target.position[1])^2 + (pos[2] + dir[2] * d - target.position[2])^2) < target.radius^2
+
+    if isec
+        return true, d
+    else
+        return false, NaN32
+    end
+
 end
 
 
