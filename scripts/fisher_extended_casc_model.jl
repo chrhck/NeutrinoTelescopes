@@ -12,14 +12,185 @@ using DataFrames
 using Zygote
 using PoissonRandom
 using SpecialFunctions
+using Enzyme
 model_path = joinpath(@__DIR__, "../assets/rq_spline_model.bson")
 
 @load model_path model hparams opt tf_dict
 
 Flux.testmode!(model)
 
+
+
+
+
+function poisson_logpmf(n, log_lambda)
+    return n * log_lambda - exp(log_lambda) - loggamma(n + 1.0)
+end
+
+function sum_llh_per_pmt!(log_pdf, log_expec, n_hits_per_pmt, out)
+    nz_ix = firstindex(log_pdf)
+    for i in eachindex(n_hits_per_pmt)
+        nhits = n_hits_per_pmt[i]
+        out[i] = poisson_logpmf(nhits, log_expec[i])
+
+        if nhits > 0
+            @views shape_lh = sum(log_pdf[nz_ix:nz_ix+nhits-1])
+            out[i] += shape_lh
+            nz_ix += nhits
+        end
+    end
+end
+
+function sum_llh_per_pmt(log_pdf, log_expec, n_hits_per_pmt)
+    out = similar(log_expec)
+    sum_llh_per_pmt!(log_pdf, log_expec, n_hits_per_pmt, out)
+    return out
+end
+
+function sum_llh_per_pmt_sum(log_pdf, log_expec, n_hits_per_pmt)
+    out = zero(eltype(log_pdf))
+    nz_ix = firstindex(log_pdf)
+    for i in eachindex(n_hits_per_pmt)
+        nhits = n_hits_per_pmt[i]
+        out += poisson_logpmf(nhits, log_expec[i])
+
+        if nhits > 0
+            @views shape_lh = sum(log_pdf[nz_ix:nz_ix+nhits-1])
+            out += shape_lh
+            nz_ix += nhits
+        end
+    end
+    return out
+end
+
+
+function sample_event(energy)
+    pos = SA[0.0f0, 10.0f0, 20.0f0]
+    dir_theta = deg2rad(50.0f0)
+    dir_phi = deg2rad(50.0f0)
+    dir = sph_to_cart(dir_theta, dir_phi)
+
+    pmt_area = Float32((75e-3 / 2)^2 * π)
+    target_radius = 0.21f0
+    target = MultiPMTDetector(
+        @SVector[0.0f0, 0.0f0, 0.0f0],
+        target_radius,
+        pmt_area,
+        make_pom_pmt_coordinates(Float32),
+        UInt16(1)
+    )
+
+    p = Particle(pos, dir, 0.0f0, Float32(energy), PEMinus)
+    input = calc_flow_inputs([p], [target], tf_dict)
+    output = model.embedding(input)
+
+    flow_params = output[1:end-1, :]
+    log_expec = output[end, :]
+
+    expec = exp.(log_expec)
+    
+    n_hits = pois_rand.(expec)
+    mask = n_hits .> 0
+
+    non_zero_hits = n_hits[mask]
+    return split_by(sample_flow(flow_params[:, mask], model.range_min, model.range_max, non_zero_hits), n_hits)
+end
+
+
+
+
+function likelihood(energy, samples, targets, tf_dict)
+    pos = SA[0.0f0, 10.0f0, 20.0f0]
+    dir_theta = deg2rad(50.0f0)
+    dir_phi = deg2rad(50.0f0)
+    dir = sph_to_cart(dir_theta, dir_phi)
+  
+
+    p = Particle(pos, dir, 0.0f0, Float32(energy), PEMinus)
+    @code_warntype( calc_flow_inputs([p], targets, tf_dict))
+    input = calc_flow_inputs([p], targets, tf_dict)
+    #=
+    output = model.embedding(input)
+
+    flow_params = output[1:end-1, :]
+    log_expec = output[end, :]
+
+    samp_cat = reduce(vcat, samples)
+    hits_per = length.(samples)
+    fp_rep = repeat_for(flow_params, hits_per)
+    poiss = poisson_logpmf.(hits_per, log_expec)
+    shape_per = sum.(split_by(
+        eval_transformed_normal_logpdf(samp_cat, fp_rep, model.range_min, model.range_max),
+        hits_per))
+
+    
+    lh = sum(poiss .+ shape_per)
+       #=
+    lh = zero(energy)
+    for (samp, fp, lep) in zip(samples, eachcol(flow_params), log_expec)
+        shape_lh = 0
+     
+        fp = reshape(fp, length(fp), 1)
+        for s in samp
+            shape_lh += eval_transformed_normal_logpdf([s], fp, model.range_min, model.range_max)[1]
+        end
+        
+
+        shape_lh = sum(eval_transformed_normal_logpdf(samp, fp_rep, model.range_min, model.range_max))
+
+        poiss = poisson_logpmf(length(samp), lep)
+
+        lh += poiss + sum(shape_lh)
+    end
+    =#
+    =#
+
+    return input[1]
+
+
+    return lh
+end
+
+pmt_area = (75e-3 / 2)^2 * π
+target_radius = 0.21
+target = MultiPMTDetector(
+    @SVector[0.0, 0.0, 0.0],
+    target_radius,
+    pmt_area,
+    make_pom_pmt_coordinates(Float64),
+    UInt16(1)
+)
+
+
+samples = sample_event(1E4)
+
+likelihood(1E4, samples, [target], tf_dict)
+
+
+#a = Enzyme.autodiff(Enzyme.Reverse, likelihood, Active, Active(1E4), samples, [target], tf_dict)
+#@show a
+
 pmt_area = Float32((75e-3 / 2)^2 * π)
 target_radius = 0.21f0
+
+
+pos = SA[0.0f0, 10.0f0, 20.0f0]
+dir_theta = deg2rad(50.0f0)
+dir_phi = deg2rad(50.0f0)
+dir = sph_to_cart(dir_theta, dir_phi)
+p = Particle(pos, dir, 0.0f0, Float32(1E5), PEMinus)
+
+target = MultiPMTDetector(
+    @SVector[0.0f0, 0.0f0, 0.0f0],
+    target_radius,
+    pmt_area,
+    make_pom_pmt_coordinates(Float32),
+    UInt16(1)
+)
+
+
+
+
 
 begin
     pos = SA[0.0f0, 10.0f0, 20.0f0]
@@ -85,74 +256,3 @@ log_expec = output[end, :]
 expec = exp.(log_expec)
 pois_expec = pois_rand.(expec)
 mask = pois_expec .> 0
-
-pois_expec[mask]
-flow_params[:, mask]
-
-
-samples = sample_flow(flow_params[:, mask], model.range_min, model.range_max, pois_expec[mask])
-
-
-function sum_by(x, n)
-    result = 0
-    ix = firstindex(x, 2)
-
-
-
-
-function likelihood(energy)
-    p = Particle(pos, dir, 0.0f0, Float32(energy), PEMinus)
-    input = calc_flow_inputs([p], [target], tf_dict)
-    output = model.embedding(input)
-
-    flow_params = output[1:end-1, :]
-    log_expec = output[end, :]
-
-    expec = exp.(log_expec)
-    pois_expec = pois_rand.(expec)
-    mask = pois_expec .> 0
-
-    non_zero_expec = pois_expec[mask]
-    samples = sample_flow(flow_params[:, mask], model.range_min, model.range_max, non_zero_expec)
-
-    log_pdf, log_expec = model(samples, repeat_for(input[:, mask], non_zero_expec), true)
-    lhs_per_pmt = split_by(log_pdf, non_zero_expec)
-    log_expec_per_pmt = first.(split_by(log_expec, non_zero_expec))
-
-    poiss_f = non_zero_expec .* log_expec_per_pmt .- exp.(log_expec_per_pmt) .- loggamma.(non_zero_expec .+ 1.0)
-
-    #ids = collect(1:16)[mask]
-    #return lhs_per_pmt, poiss_f, ids
-
-    return sum.(lhs_per_pmt) .+ poiss_f
-
-end
-
-
-
-
-likelihood(1E4)
-
-
-lh_per_pmt(x) = sum.(x[1]) .+ x[2]
-
-
-lhs = [likelihood(1E4)[1][1] for i in 1:10000]
-hist(((reduce(vcat, .-lhs))))
-
-
-
-
-
-first.([[1,2], [1]])
-    
-
-
-
-
-
-
-Zygote.gradient()
-
-repeat_for([1 2; 1 2], [0, 4])
-[1 2; 1 2]

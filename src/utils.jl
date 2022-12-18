@@ -13,7 +13,7 @@ export CategoricalSetDistribution
 export sample_cherenkov_track_direction
 export rand_gamma
 export fwhm
-export repeat_for, split_by
+export repeat_for, repeat_for!, split_by
 
 const GL10 = gausslegendre(10)
 
@@ -21,8 +21,9 @@ const GL10 = gausslegendre(10)
     repeat_for(x::AbstractMatrix, n::AbstractVector)
 Repeat each slice along the second dimension of x for n times
 """
-function repeat_for(x::AbstractMatrix, n::AbstractVector)
-    out = similar(x, (size(x, 1), sum(n)))
+repeat_for(x::AbstractMatrix, n::AbstractVector) = repeat_for!(x, n, similar(x, (size(x, 1), sum(n))))
+
+function repeat_for!(x::AbstractMatrix, n::AbstractVector, out)
     ix = firstindex(x, 2)
     for i in eachindex(n)
         ni = n[i]
@@ -47,6 +48,14 @@ function split_by(x::AbstractVector, n::AbstractVector)
     end
 
     return result
+end
+
+function split_by!(x::AbstractVector, n::AbstractVector, out)
+    start = firstindex(x)
+    for (i, l) in enumerate(n)
+        out[i] = x[start:start+l-1]
+        start += l
+    end
 end
 
 
@@ -150,16 +159,18 @@ end
 
 
 function cart_to_sph(x::Real, y::Real, z::Real)
+
+    T = promote_type(typeof(x), typeof(y), typeof(z))
     if z==1
-        return 0, 0
+        return zero(T), zero(T)
     elseif z==-1
-        return π, 0
+        return T(π), zero(T)
     end
     theta = acos(z)
     if (x==0) && (y > 0)
-        phi = π/2
+        phi = T(π/2)
     elseif (x==0) && (y < 0)
-        phi = -π/2
+        phi = T(-π/2)
     else
         phi = atan(y, x)
     end

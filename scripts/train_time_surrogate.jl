@@ -53,10 +53,12 @@ hob = @hyperopt for i = nit,
         batch_size=batch_size,
         seed=1,)
 
+    model_path = joinpath(@__DIR__, "../assets/rq_spline_model_K$(K)_LR$(lr)_MLP_$(mlp_layer_size)_DRP_$(dropout)_BS_$(batch_size).bson")
+    @save model_path cpu(model) hparams opt tf_dict
     model_loss
 end
 
 hob
 
-ref = Plots.plot(hob)
-savefig(ref, joinpath(@__DIR__, "../figures/hyperopt.png"))
+ho_path = joinpath(@__DIR__, "../assets/hyperopt.bson")
+@save hob.history hob.results

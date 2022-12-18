@@ -124,6 +124,7 @@ function (m::RQNormFlow)(x, cond, pred_log_expec=false)
     end
 end
 
+
 """
     log_likelihood_with_poisson(x::NamedTuple, model::RQNormFlow)
 
@@ -319,7 +320,8 @@ struct Normalizer{T}
 end
 
 Normalizer(x::AbstractVector) = Normalizer(mean(x), std(x))
-(norm::Normalizer)(x::AbstractVector) = (x .- norm.mean) ./ norm.σ
+(norm::Normalizer)(x::AbstractVector) = promote(x .- norm.mean) ./ norm.σ
+(norm::Normalizer)(x::Number) = (x - norm.mean) / norm.σ
 
 function fit_normalizer!(x::AbstractVector)
     tf = Normalizer(x)
@@ -354,9 +356,7 @@ function preproc_labels(df, norm_dict=nothing)
 
 
     if "pmt_id" in names(df)
-        df[!, :pmt_id] = categorical(df[:, :pmt_id], levels=1:16)
-
-        lev = levels(df[:, :pmt_id])
+        lev = 1:16
         lev_names = Symbol.(Ref("pmt_"), Int.(lev))
 
         one_hot = DataFrame((lev .== permutedims(df[:, :pmt_id]))', lev_names)
@@ -367,77 +367,52 @@ function preproc_labels(df, norm_dict=nothing)
 end
 
 
-function _calc_flow_inputs(
+
+function calc_flow_inputs(
     particles::AbstractVector{<:Particle},
-    targets::AbstractVector{T}
-) where {T<:MultiPMTDetector}
+    targets::AbstractVector{T},
+    tf_dict::Dict{String, <:Normalizer{NT}}
+) where {T<:MultiPMTDetector, NT}
 
-
-    input_len = length(particles) * length(targets)
     n_pmt = get_pmt_count(T)
-
-
-
-    input = (
-        distance=Vector{Float64}(undef, input_len * n_pmt),
-        energy=Vector{Float64}(undef, input_len * n_pmt),
-        dir_theta=Vector{Float64}(undef, input_len * n_pmt),
-        dir_phi=Vector{Float64}(undef, input_len * n_pmt),
-        pos_theta=Vector{Float64}(undef, input_len * n_pmt),
-        pos_phi=Vector{Float64}(undef, input_len * n_pmt),
-        pmt_id=Vector{Int64}(undef, input_len * n_pmt))
-
     li = LinearIndices((1:length(particles), 1:length(targets), 1:n_pmt))
+
+    out = Matrix{Float64}(undef, 24, length(li))
 
     for i in eachindex(particles), j in eachindex(targets)
 
         p = particles[i]
         t = targets[j]
 
-        distance = norm(p.position .- t.position)
-        energy = p.energy
+        log_distance = log(norm(p.position .- t.position))
+        log_energy = log(p.energy)
+
+        log_distance_tf = tf_dict["log_distance"](log_distance)
+        log_energy_tf = tf_dict["log_energy"](log_energy)
+
+        dir_theta, dir_phi = cart_to_sph(p.direction...)
 
         normed_pos = p.position ./ norm(p.position)
-        dir_theta, dir_phi = cart_to_sph(p.direction...)
         pos_theta, pos_phi = cart_to_sph(normed_pos...)
 
-        for k in 1:n_pmt
-            input.distance[li[i, j, k]] = distance
-            input.energy[li[i, j, k]] = energy
-            input.dir_theta[li[i, j, k]] = dir_theta
-            input.dir_phi[li[i, j, k]] = dir_phi
-            input.pos_theta[li[i, j, k]] = pos_theta
-            input.pos_phi[li[i, j, k]] = pos_phi
-            input.pmt_id[li[i, j, k]] = k
+        dir_x, dir_y, dir_z = sph_to_cart(dir_theta, dir_phi)
+        pos_x, pos_y, pos_z = sph_to_cart(pos_theta, pos_phi)
+
+        dir_x_tf::NT = tf_dict["dir_x"](dir_x)
+        dir_y_tf::NT = tf_dict["dir_y"](dir_y)
+        dir_z_tf::NT = tf_dict["dir_z"](dir_z)
+
+        pos_x_tf = tf_dict["pos_x"](pos_x)
+        pos_y_tf = tf_dict["pos_y"](pos_y)
+        pos_z_tf = tf_dict["pos_z"](pos_z)
+
+        for k in 1:16
+            @show 1:16 .== k
+            out[:, li[i, j, k]] .= vcat(1:16 .== k, [log_distance_tf, log_energy_tf, dir_x_tf, dir_y_tf, dir_z_tf, pos_x_tf, pos_y_tf, pos_z_tf])
         end
     end
-
-    df_input = DataFrame(input)
-    return df_input
+    return out
 end
-
-function calc_flow_inputs(
-    particles::AbstractVector{<:Particle},
-    targets::AbstractVector{<:MultiPMTDetector},
-    traf_dict)
-
-    df_labels = _calc_flow_inputs(particles, targets)
-    trf_labels, _ = preproc_labels(df_labels, traf_dict)
-
-    return trf_labels |> Matrix |> adjoint
-end
-
-
-function calc_flow_inputs(particle::Particle, target::MultiPMTDetector, pmt_id::Integer, traf_dict)
-
-    df_labels = _calc_flow_inputs([particle], [target])
-    mask = df_labels[:, :pmt_id] .== pmt_id
-
-    trf_labels, _ = preproc_labels(df_labels[mask, :], traf_dict)
-
-    return trf_labels |> Matrix |> adjoint
-end
-
 
 function read_hdf(fnames, nsel_frac=0.8, rng=nothing)
 
