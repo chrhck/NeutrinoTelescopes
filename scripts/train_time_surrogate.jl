@@ -26,7 +26,7 @@ fnames = [
 
 rng = MersenneTwister(31338)
 nsel_frac = 0.3
-tres, nhits, cond_labels, tf_dict = read_hdf(fnames, nsel_frac, rng)
+tres, nhits, cond_labels, tf_dict = read_pmt_hits(fnames, nsel_frac, rng)
 
 
 nit = 100
@@ -53,8 +53,9 @@ hob = @hyperopt for i = nit,
         batch_size=batch_size,
         seed=1,)
 
+    model = cpu(model)
     model_path = joinpath(@__DIR__, "../assets/rq_spline_model_K$(K)_LR$(lr)_MLP_$(mlp_layer_size)_DRP_$(dropout)_BS_$(batch_size).bson")
-    @save model_path cpu(model) hparams opt tf_dict
+    @save model_path model hparams opt tf_dict
     model_loss
 end
 

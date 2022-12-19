@@ -20,7 +20,7 @@ using ...Types
 using ...Utils
 using ...PhotonPropagation.Detection
 
-export create_pmt_table, preproc_labels, read_hdf, calc_flow_inputs, fit_trafo_pipeline, log_likelihood_with_poisson
+export create_pmt_table, preproc_labels, read_pmt_hits, calc_flow_inputs, fit_trafo_pipeline, log_likelihood_with_poisson
 export train_time_expectation_model, train_model!, RQNormFlowHParams, setup_time_expectation_model, setup_dataloaders
 export Normalizer
 
@@ -320,12 +320,12 @@ struct Normalizer{T}
 end
 
 Normalizer(x::AbstractVector) = Normalizer(mean(x), std(x))
-(norm::Normalizer)(x::AbstractVector) = promote(x .- norm.mean) ./ norm.σ
+#(norm::Normalizer)(x::AbstractVector) = promote(x .- norm.mean) ./ norm.σ
 (norm::Normalizer)(x::Number) = (x - norm.mean) / norm.σ
 
 function fit_normalizer!(x::AbstractVector)
     tf = Normalizer(x)
-    x .= tf(x)
+    x .= tf.(x)
     return x, tf
 end
 
@@ -371,8 +371,8 @@ end
 function calc_flow_inputs(
     particles::AbstractVector{<:Particle},
     targets::AbstractVector{T},
-    tf_dict::Dict{String, <:Normalizer{NT}}
-) where {T<:MultiPMTDetector, NT}
+    tf_dict::Dict{String,<:Normalizer{NT}}
+) where {T<:MultiPMTDetector,NT}
 
     n_pmt = get_pmt_count(T)
     li = LinearIndices((1:length(particles), 1:length(targets), 1:n_pmt))
@@ -414,7 +414,7 @@ function calc_flow_inputs(
     return out
 end
 
-function read_hdf(fnames, nsel_frac=0.8, rng=nothing)
+function read_pmt_hits(fnames, nsel_frac=0.8, rng=nothing)
 
     all_hits = []
     for fname in fnames
