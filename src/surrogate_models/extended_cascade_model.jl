@@ -164,7 +164,7 @@ Base.@kwdef struct RQNormFlowHParams
     dropout::Float64 = 0.1
     non_linearity::Symbol = :relu
     seed::Int64 = 31338
-    use_l2_norm = false
+    l2_norm_alpha = 0.0
 end
 
 function setup_time_expectation_model(hparams::RQNormFlowHParams)
@@ -260,8 +260,8 @@ function train_model!(opt, train, test, model, loss_function, hparams, logger, d
             d = d |> device
             gs = gradient(pars) do
                 loss = loss_function(d, model)
-                if hparams.use_l2_norm
-                    loss = loss + sum(sqnorm, pars)
+                if hparams.l2_norm_alpha > 0
+                    loss = loss + 0.5 * hparams.l2_norm_alpha * sum(sqnorm, pars)
                 end
 
                 return loss
@@ -340,10 +340,10 @@ function preproc_labels(df, norm_dict=nothing)
     cond_labels = hcat(df[:, [:log_distance, :log_energy]], dir_cart, pos_cart)
 
     if isnothing(norm_dict)
-        norm_dict = Dict{String,Normalizer}()
+        norm_dict = Dict{String,Normalizer{Float64}}()
         for col in names(cond_labels)
 
-            _, tf = fit_normalizer!(cond_labels[!, col])
+            _, tf = fit_normalizer!(Float64.(cond_labels[!, col]))
             norm_dict[col] = tf
         end
     else
@@ -371,7 +371,7 @@ end
 function calc_flow_inputs(
     particles::AbstractVector{<:Particle},
     targets::AbstractVector{T},
-    tf_dict::Dict{String,<:Normalizer{NT}}
+    tf_dict::Dict{String,Normalizer{NT}}
 ) where {T<:MultiPMTDetector,NT}
 
     n_pmt = get_pmt_count(T)
@@ -407,7 +407,6 @@ function calc_flow_inputs(
         pos_z_tf = tf_dict["pos_z"](pos_z)
 
         for k in 1:16
-            @show 1:16 .== k
             out[:, li[i, j, k]] .= vcat(1:16 .== k, [log_distance_tf, log_energy_tf, dir_x_tf, dir_y_tf, dir_z_tf, pos_x_tf, pos_y_tf, pos_z_tf])
         end
     end

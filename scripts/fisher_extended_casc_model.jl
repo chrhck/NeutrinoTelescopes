@@ -64,7 +64,7 @@ function sum_llh_per_pmt_sum(log_pdf, log_expec, n_hits_per_pmt)
 end
 
 
-function sample_event(energy)
+function sample_event(energy, tf_dict)
     pos = SA[0.0f0, 10.0f0, 20.0f0]
     dir_theta = deg2rad(50.0f0)
     dir_phi = deg2rad(50.0f0)
@@ -88,7 +88,7 @@ function sample_event(energy)
     log_expec = output[end, :]
 
     expec = exp.(log_expec)
-    
+
     n_hits = pois_rand.(expec)
     mask = n_hits .> 0
 
@@ -104,10 +104,10 @@ function likelihood(energy, samples, targets, tf_dict)
     dir_theta = deg2rad(50.0f0)
     dir_phi = deg2rad(50.0f0)
     dir = sph_to_cart(dir_theta, dir_phi)
-  
+
 
     p = Particle(pos, dir, 0.0f0, Float32(energy), PEMinus)
-    @code_warntype( calc_flow_inputs([p], targets, tf_dict))
+    @code_warntype(calc_flow_inputs([p], targets, tf_dict))
     input = calc_flow_inputs([p], targets, tf_dict)
     #=
     output = model.embedding(input)
@@ -123,18 +123,18 @@ function likelihood(energy, samples, targets, tf_dict)
         eval_transformed_normal_logpdf(samp_cat, fp_rep, model.range_min, model.range_max),
         hits_per))
 
-    
+
     lh = sum(poiss .+ shape_per)
        #=
     lh = zero(energy)
     for (samp, fp, lep) in zip(samples, eachcol(flow_params), log_expec)
         shape_lh = 0
-     
+
         fp = reshape(fp, length(fp), 1)
         for s in samp
             shape_lh += eval_transformed_normal_logpdf([s], fp, model.range_min, model.range_max)[1]
         end
-        
+
 
         shape_lh = sum(eval_transformed_normal_logpdf(samp, fp_rep, model.range_min, model.range_max))
 
@@ -161,8 +161,11 @@ target = MultiPMTDetector(
     UInt16(1)
 )
 
+tf_dict = Dict{String,Normalizer{Float64}}(tf_dict)
 
-samples = sample_event(1E4)
+
+samples = sample_event(3E4, tf_dict)
+
 
 likelihood(1E4, samples, [target], tf_dict)
 
