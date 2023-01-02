@@ -13,14 +13,16 @@ using CategoricalArrays
 using HDF5
 using StatsBase
 using LinearAlgebra
-
+using Flux.Optimise
+using BSON: @save
+using Base.Iterators
 
 using ..RQSplineFlow: eval_transformed_normal_logpdf
 using ...Types
 using ...Utils
 using ...PhotonPropagation.Detection
 
-export create_pmt_table, preproc_labels, read_pmt_hits, calc_flow_inputs, fit_trafo_pipeline, log_likelihood_with_poisson
+export create_pmt_table, preproc_labels, read_pmt_hits, calc_flow_input, fit_trafo_pipeline, log_likelihood_with_poisson
 export train_time_expectation_model, train_model!, RQNormFlowHParams, setup_time_expectation_model, setup_dataloaders
 export Normalizer
 
@@ -199,13 +201,17 @@ function setup_dataloaders(data, hparams::RQNormFlowHParams)
 end
 
 
-function train_time_expectation_model(data, use_gpu=true, use_early_stopping=true; hyperparams...)
+function train_time_expectation_model(data, use_gpu=true, use_early_stopping=true, checkpoint_path=nothing; hyperparams...)
 
     hparams = RQNormFlowHParams(; hyperparams...)
 
     model = setup_time_expectation_model(hparams)
 
-    opt = Flux.Optimise.Adam(hparams.lr)
+    if hparams.l2_norm_alpha > 0
+        opt = Optimiser(WeightDecay(hparams.l2_norm_alpha), Adam(hparams.lr))
+    else
+        opt = Adam(hparams.lr)
+    end
 
     logdir = joinpath(@__DIR__, "../../tensorboard_logs/RQNormFlow")
     lg = TBLogger(logdir)
@@ -213,7 +219,7 @@ function train_time_expectation_model(data, use_gpu=true, use_early_stopping=tru
     train_loader, test_loader = setup_dataloaders(data, hparams)
 
     device = use_gpu ? gpu : cpu
-    model, final_test_loss = train_model!(opt, train_loader, test_loader, model, log_likelihood_with_poisson, hparams, lg, device, use_early_stopping)
+    model, final_test_loss = train_model!(opt, train_loader, test_loader, model, log_likelihood_with_poisson, hparams, lg, device, use_early_stopping, checkpoint_path)
 
     return model, final_test_loss, hparams, opt
 end
@@ -238,7 +244,7 @@ end
 
 sqnorm(x) = sum(abs2, x)
 
-function train_model!(opt, train, test, model, loss_function, hparams, logger, device, use_early_stopping)
+function train_model!(opt, train, test, model, loss_function, hparams, logger, device, use_early_stopping, checkpoint_path=nothing)
     model = model |> device
     pars = Flux.params(model)
 
@@ -251,6 +257,8 @@ function train_model!(opt, train, test, model, loss_function, hparams, logger, d
     local loss
     local total_test_loss
 
+    best_test = Inf
+
     @progress for epoch in 1:hparams.epochs
 
         Flux.trainmode!(model)
@@ -260,9 +268,6 @@ function train_model!(opt, train, test, model, loss_function, hparams, logger, d
             d = d |> device
             gs = gradient(pars) do
                 loss = loss_function(d, model)
-                if hparams.l2_norm_alpha > 0
-                    loss = loss + 0.5 * hparams.l2_norm_alpha * sum(sqnorm, pars)
-                end
 
                 return loss
             end
@@ -291,6 +296,11 @@ function train_model!(opt, train, test, model, loss_function, hparams, logger, d
 
         end
         println("Epoch: $epoch, Train: $total_train_loss Test: $total_test_loss")
+
+        if !isnothing(checkpoint_path) && epoch > 5 && total_test_loss < best_test
+            @save checkpoint_path*"_BEST.bson" model
+            best_test = total_test_loss
+        end
 
         done!(stopper, total_test_loss) && break
 
@@ -330,88 +340,86 @@ function fit_normalizer!(x::AbstractVector)
 end
 
 
-function preproc_labels(df, norm_dict=nothing)
+function dataframe_to_matrix(df)
+    feature_matrix = Matrix{Float64}(undef, 9, nrow(df))
+    feature_matrix[1, :] .= log.(df[:, :distance])
+    feature_matrix[2, :] .= log.(df[:, :energy])
 
-    df[!, :log_distance] = log.(df[:, :distance])
-    df[!, :log_energy] = log.(df[:, :energy])
-    dir_cart = DataFrame(reduce(hcat, sph_to_cart.(df[:, :dir_theta], df[:, :dir_phi]))', [:dir_x, :dir_y, :dir_z])
-    pos_cart = DataFrame(reduce(hcat, sph_to_cart.(df[:, :pos_theta], df[:, :pos_phi]))', [:pos_x, :pos_y, :pos_z])
+    feature_matrix[3:5, :] .= reduce(hcat, sph_to_cart.(df[:, :dir_theta], df[:, :dir_phi]))
+    feature_matrix[6:8, :] .= reduce(hcat, sph_to_cart.(df[:, :pos_theta], df[:, :pos_phi]))
+    feature_matrix[9, :] .= df[:, :pmt_id]
 
-    cond_labels = hcat(df[:, [:log_distance, :log_energy]], dir_cart, pos_cart)
+    return feature_matrix
+end
 
-    if isnothing(norm_dict)
-        norm_dict = Dict{String,Normalizer{Float64}}()
-        for col in names(cond_labels)
+function apply_feature_transform(m, tf_vec, n_pmt)
 
-            _, tf = fit_normalizer!(Float64.(cond_labels[!, col]))
-            norm_dict[col] = tf
-        end
-    else
-        for col in names(cond_labels)
-            tf = norm_dict[col]
+    lev = 1:n_pmt
+    one_hot = (lev .== permutedims(m[9, :]))
 
-            cond_labels[!, col] .= tf(cond_labels[!, col])
-        end
-    end
+    tf_matrix = mapreduce(
+        t -> permutedims(t[2].(t[1])),
+        vcat,
+        zip(eachrow(m), tf_vec) 
+    )
 
-
-    if "pmt_id" in names(df)
-        lev = 1:16
-        lev_names = Symbol.(Ref("pmt_"), Int.(lev))
-
-        one_hot = DataFrame((lev .== permutedims(df[:, :pmt_id]))', lev_names)
-
-        cond_labels = hcat(cond_labels, one_hot)
-    end
-    return cond_labels, norm_dict
+    return vcat(one_hot, tf_matrix)
 end
 
 
+function preproc_labels(df, n_pmt, tf_vec=nothing)
 
-function calc_flow_inputs(
-    particles::AbstractVector{<:Particle},
-    targets::AbstractVector{T},
-    tf_dict::Dict{String,Normalizer{NT}}
-) where {T<:MultiPMTDetector,NT}
+    feature_matrix = dataframe_to_matrix(df)
 
-    n_pmt = get_pmt_count(T)
-    li = LinearIndices((1:length(particles), 1:length(targets), 1:n_pmt))
-
-    out = Matrix{Float64}(undef, 24, length(li))
-
-    for i in eachindex(particles), j in eachindex(targets)
-
-        p = particles[i]
-        t = targets[j]
-
-        log_distance = log(norm(p.position .- t.position))
-        log_energy = log(p.energy)
-
-        log_distance_tf = tf_dict["log_distance"](log_distance)
-        log_energy_tf = tf_dict["log_energy"](log_energy)
-
-        dir_theta, dir_phi = cart_to_sph(p.direction...)
-
-        normed_pos = p.position ./ norm(p.position)
-        pos_theta, pos_phi = cart_to_sph(normed_pos...)
-
-        dir_x, dir_y, dir_z = sph_to_cart(dir_theta, dir_phi)
-        pos_x, pos_y, pos_z = sph_to_cart(pos_theta, pos_phi)
-
-        dir_x_tf::NT = tf_dict["dir_x"](dir_x)
-        dir_y_tf::NT = tf_dict["dir_y"](dir_y)
-        dir_z_tf::NT = tf_dict["dir_z"](dir_z)
-
-        pos_x_tf = tf_dict["pos_x"](pos_x)
-        pos_y_tf = tf_dict["pos_y"](pos_y)
-        pos_z_tf = tf_dict["pos_z"](pos_z)
-
-        for k in 1:16
-            out[:, li[i, j, k]] .= vcat(1:16 .== k, [log_distance_tf, log_energy_tf, dir_x_tf, dir_y_tf, dir_z_tf, pos_x_tf, pos_y_tf, pos_z_tf])
+    if isnothing(tf_vec)
+        tf_vec = Vector{Normalizer{Float64}}(undef, 8)
+        for (row, ix) in zip(eachrow(feature_matrix), eachindex(tf_vec))
+            tf = Normalizer(row)
+            tf_vec[ix] = tf
         end
     end
-    return out
+
+    feature_matrix = apply_feature_transform(feature_matrix, tf_vec, n_pmt)
+
+    return feature_matrix, tf_vec
 end
+
+
+function calc_flow_input(particle::Particle, target::PhotonTarget, tf_vec::AbstractVector)
+
+    particle_pos = particle.position
+    particle_dir = particle.direction
+    particle_energy = particle.energy
+    target_pos = target.position
+
+    pnorm = norm(particle_pos)
+    normed_pos = particle_pos ./ pnorm 
+ 
+    n_pmt = get_pmt_count(target)
+
+    feature_matrix = repeat(
+        [
+            log(norm(particle_pos .- target_pos))
+            log(particle_energy)
+            particle_dir
+            normed_pos
+        ],
+        1, n_pmt)
+
+    feature_matrix = vcat(feature_matrix, permutedims(1:n_pmt))
+
+    return apply_feature_transform(feature_matrix, tf_vec, n_pmt)
+
+end
+
+function calc_flow_input(particles::AbstractVector{<:Particle}, targets::AbstractVector{<:PhotonTarget}, tf_vec)
+    return mapreduce(
+        t -> calc_flow_input(t[1], t[2], tf_vec),
+        hcat,
+        product(particles, targets))
+end
+
+
 
 function read_pmt_hits(fnames, nsel_frac=0.8, rng=nothing)
 
@@ -439,7 +447,7 @@ function read_pmt_hits(fnames, nsel_frac=0.8, rng=nothing)
         end
     end
 
-    rnd_ixs = shuffle(1:length(all_hits))
+    rnd_ixs = shuffle(rng, 1:length(all_hits))
 
     all_hits = all_hits[rnd_ixs]
 
@@ -447,8 +455,8 @@ function read_pmt_hits(fnames, nsel_frac=0.8, rng=nothing)
 
     tres = hits_df[:, :tres]
     nhits = hits_df[:, :hits_per_pmt]
-    cond_labels, tf_dict = preproc_labels(hits_df)
-    return tres, nhits, cond_labels |> Matrix |> Adjoint, tf_dict
+    cond_labels, tf_dict = preproc_labels(hits_df, 16)
+    return tres, nhits, cond_labels, tf_dict
 end
 
 read_hdf(fname::String, nsel, rng) = read_hdf([fname], nsel, rng)

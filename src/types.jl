@@ -15,11 +15,14 @@ pdg_code(::Type{PEPlus}) = -11
 pdg_code(::Type{PEMinus}) = 11
 pdg_code(::Type{PGamma}) = 22
 
-mutable struct Particle{T, PType <: ParticleType}
-    position::SVector{3,T}
-    direction::SVector{3,T}
-    time::T
-    energy::T
+mutable struct Particle{PT, DT, TT, ET, PType <: ParticleType}
+    position::SVector{3,PT}
+    direction::SVector{3,DT}
+    time::TT
+    energy::ET
     type::Type{PType}
 end
+
+
+
 end

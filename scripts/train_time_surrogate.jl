@@ -62,4 +62,4 @@ end
 hob
 
 ho_path = joinpath(@__DIR__, "../assets/hyperopt.bson")
-@save hob.history hob.results
+@save ho_path hob.history hob.results

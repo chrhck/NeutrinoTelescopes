@@ -404,7 +404,10 @@ end
 
 Evaluate logpdf of scaled, shifted, rq-spline applied to normal distribution
 """
-function eval_transformed_normal_logpdf(y, params, range_min, range_max)
+function eval_transformed_normal_logpdf(
+    y::AbstractVector,
+    params::AbstractMatrix,
+    range_min, range_max)
     @assert length(y) == size(params, 2)
     spline_params, shift, scale = _split_params(params)
 
@@ -413,7 +416,6 @@ function eval_transformed_normal_logpdf(y, params, range_min, range_max)
 
     x_pos, y_pos, knot_slopes = constrain_spline_params(spline_params, range_min, range_max)
     x, logdet_spline = inv_rqs_univariate(x_pos, y_pos, knot_slopes, y)
-
 
     normal_logpdf = -0.5 .* (x .^ 2 .+ log(2 * pi))
 
