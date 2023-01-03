@@ -19,6 +19,7 @@ using Distributions
 using Optim
 using LogExpFunctions
 using Base.Iterators
+using Formatting
 
 
 function poisson_logpmf(n, log_lambda)
@@ -262,10 +263,21 @@ for (k, v) in min_vals
 
 end
 
+norm([10, 10, 10])
+
 fig
 
-v = reduce(hcat, min_vals["FULL"])
-hist(rad2deg.(acos.(dot.(sph_to_cart.(v[2, :], v[3, :]), Ref(sph_to_cart(dir_theta, dir_phi))))))
+fig = Figure()
+ax = Axis(fig[1, 1], xlabel="Angular Resolution (deg)", ylabel="Counts", title="50TeV extended 17m distance ")
+v = reduce(hcat, min_vals["5"])
+ang_res = rad2deg.(acos.(dot.(sph_to_cart.(v[2, :], v[3, :]), Ref(sph_to_cart(dir_theta, dir_phi)))))
+
+hist!(ax, ang_res, bins=bins)
+vlines!(ax, median(ang_res), color=:black, label=format("Median: {:.2f}°",median(ang_res) ))
+leg = Legend(fig[1, 2], ax)
+fig
+
+
 
 
 
