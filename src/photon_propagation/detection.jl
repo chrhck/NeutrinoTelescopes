@@ -11,7 +11,7 @@ using Rotations
 using ...Utils
 
 
-export PhotonTarget, DetectionSphere, p_one_pmt_acc, MultiPMTDetector, make_pom_pmt_coordinates, get_pmt_count
+export PhotonTarget, DetectionSphere, p_one_pmt_acc, MultiPMTDetector, get_pmt_count
 export geometry_type, Spherical, Rectangular, RectangularDetector, Circular, CircularDetector
 export check_pmt_hit
 export make_detector_cube, make_targets, make_detector_hex
@@ -74,6 +74,18 @@ get_pmt_count(::DetectionSphere) = 1
 get_pmt_count(::MultiPMTDetector{T,N,L}) where {T,N,L} = N
 get_pmt_count(::Type{MultiPMTDetector{T,N,L}}) where {T,N,L} = N
 
+function Base.convert(::Type{MultiPMTDetector{T}}, x::MultiPMTDetector) where {T}
+
+    pos = T.(x.position)
+    radius = T(x.radius)
+    pmt_area = T(x.pmt_area)
+    pmt_coordinates = T.(x.pmt_coordinates)
+
+    return MultiPMTDetector(pos, radius, pmt_area, pmt_coordinates, x.module_id)
+end
+
+
+
 
 function get_pmt_positions(
     target::PixelatedTarget,
@@ -120,39 +132,6 @@ function check_pmt_hit(
     return pmt_hit_ids
 
 end
-
-
-function make_pom_pmt_coordinates(T::Type)
-
-    coords = Matrix{T}(undef, 2, 16)
-
-    # upper
-    coords[1, 1:4] .= deg2rad(90 - 57.5)
-    coords[2, 1:4] = (range(π / 4; step=π / 2, length=4))
-
-    # upper 2
-    coords[1, 5:8] .= deg2rad(90 - 25)
-    coords[2, 5:8] = (range(0; step=π / 2, length=4))
-
-    # lower 2
-    coords[1, 9:12] .= deg2rad(90 + 25)
-    coords[2, 9:12] = (range(0; step=π / 2, length=4))
-
-    # lower
-    coords[1, 13:16] .= deg2rad(90 + 57.5)
-    coords[2, 13:16] = (range(π / 4; step=π / 2, length=4))
-
-    R = calc_rot_matrix(SA[0.0, 0.0, 1.0], SA[1.0, 0.0, 0.0])
-    @views for col in eachcol(coords)
-        cart = sph_to_cart(col[1], col[2])
-        col[:] .= cart_to_sph((R * cart)...)
-    end
-
-    return SMatrix{2,16}(coords)
-end
-
-
-
 
 function area_acceptance(::SVector{3,<:Real}, target::DetectionSphere)
     total_pmt_area = target.n_pmts * target.pmt_area

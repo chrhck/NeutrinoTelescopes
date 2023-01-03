@@ -17,4 +17,5 @@ include("surrogate_models/SurrogateModels.jl")
 @reexport using .PhotonPropagation
 @reexport using .PMTFrontEnd
 @reexport using .SurrogateModels
+@reexport using .EventGeneration
 end

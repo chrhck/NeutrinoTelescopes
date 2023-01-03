@@ -20,28 +20,19 @@ using Optim
 using LogExpFunctions
 using Base.Iterators
 
+
 function poisson_logpmf(n, log_lambda)
     return n * log_lambda - exp(log_lambda) - loggamma(n + 1.0)
 end
 
 
-function sample_event(energy, dir_theta, dir_phi, position, model, tf_dict)
+function sample_event(energy, dir_theta, dir_phi, position, targets, model, tf_dict; rng=nothing)
     
     dir = sph_to_cart(dir_theta, dir_phi)
 
-    pmt_area = (75e-3 / 2)^2 * π
-    target_radius = 0.21
-    target = MultiPMTDetector(
-        @SVector[0.0, 0.0, 0.0],
-        target_radius,
-        pmt_area,
-        make_pom_pmt_coordinates(Float64),
-        UInt16(1)
-    )
-
     particle = Particle(position, dir, 0., energy, PEMinus)
 
-    input = calc_flow_input(particle, target, tf_dict)
+    input = calc_flow_input([particle], targets, tf_dict)
     
     output = model.embedding(input)
 
@@ -54,7 +45,8 @@ function sample_event(energy, dir_theta, dir_phi, position, model, tf_dict)
     mask = n_hits .> 0
 
     non_zero_hits = n_hits[mask]
-    return split_by(sample_flow(flow_params[:, mask], model.range_min, model.range_max, non_zero_hits), n_hits)
+    
+    return split_by(sample_flow(flow_params[:, mask], model.range_min, model.range_max, non_zero_hits, rng=rng), n_hits)
 end
 
 
@@ -115,12 +107,12 @@ function min_lh(samples, position, targets, model, tf_dict)
     return results
 end
 
-function calc_resolution_maxlh(model, tf_dict, pos, n)
+function calc_resolution_maxlh(targets, sampling_model, eval_model, pos, n)
     
     min_vals =[]
     for _ in 1:n
-        samples = sample_event(1E4, 0.1, 0.2, pos, model, tf_dict)
-        res = min_lh(samples, pos,  [target], model,  tf_dict)    
+        samples = sample_event(1E4, 0.1, 0.2, pos, targets, sampling_model[:model], sampling_model[:tf_dict])
+        res = min_lh(samples, pos, targets , eval_model[:model],  eval_model[:tf_dict])    
         push!(min_vals, Optim.minimizer(res))
     end
     min_vals = reduce(hcat, min_vals)
@@ -128,38 +120,21 @@ function calc_resolution_maxlh(model, tf_dict, pos, n)
     return min_vals
 end
 
-
-function convert(T, x::Particle)
-    pos = T.(x.position)
-    dir = T.(x.direction)
-    energy = T(x.energy)
-    time = T(x.time)
-
-    return Particle(pos, dir, time, energy, x.type)
-end
-
-function convert(T, x::MultiPMTDetector)
-
-    pos = T.(x.position)
-    radius = T(x.radius)
-    pmt_area = T(x.pmt_area)
-    pmt_coordinates = T.(x.pmt_coordinates)
-
-    return MultiPMTDetector(pos, radius, pmt_area, pmt_coordinates, x.module_id)
-end
+calc_resolution_maxlh(targets, model, pos, n) = calc_resolution_maxlh(targets, model, model, pos, n)
 
 
 
-
-function mc_expectation(particles, targets)
+function mc_expectation(particles::AbstractVector{<:Particle}, targets::AbstractVector{<:MultiPMTDetector}, seed)
     
     wl_range = (300.0f0, 800.0f0)
     medium = make_cascadia_medium_properties(0.99f0)
     spectrum = CherenkovSpectrum(wl_range, 30, medium)
 
-    sources = [ExtendedCherenkovEmitter(convert(Float32, p), medium, wl_range) for p in particles]
+    sources = [ExtendedCherenkovEmitter(convert(Particle{Float32}, p), medium, wl_range) for p in particles]
 
-    photon_setup = PhotonPropSetup(sources, convert.(Ref(Float32), targets), medium, spectrum, 1)
+    targets_c::Vector{MultiPMTDetector{Float32}} = targets
+
+    photon_setup = PhotonPropSetup(sources, targets_c, medium, spectrum, seed)
     photons = propagate_photons(photon_setup)
 
     calc_total_weight!(photons, photon_setup)
@@ -189,8 +164,8 @@ function compare_mc_model(
     end
 
     for (mname, model_path) in models
-        @load model_path model hparams opt tf_vec
-        input = calc_flow_input(particles, targets, tf_vec)
+        @load model_path model hparams opt tf_dict
+        input = calc_flow_input(particles, targets, tf_dict)
         log_pdf, log_expec = model(repeat(times, size(input, 2)), repeat(input, inner=(1, length(times))), true)
         log_pdf = reshape(log_pdf, length(times), size(input, 2),)
         log_expec = reshape(log_expec, length(times), size(input, 2),)
@@ -212,20 +187,26 @@ models = Dict(
     "2" => joinpath(@__DIR__, "../assets/rq_spline_model_l2_0_2_FNL.bson"),
     "3" => joinpath(@__DIR__, "../assets/rq_spline_model_l2_0_3_FNL.bson"),
     "4" => joinpath(@__DIR__, "../assets/rq_spline_model_l2_0_4_FNL.bson"),
-    "5" => joinpath(@__DIR__, "../assets/rq_spline_model_l2_0_5_FNL.bson")
+    "5" => joinpath(@__DIR__, "../assets/rq_spline_model_l2_0_5_FNL.bson"),
+    "FULL" => joinpath(@__DIR__, "../assets/rq_spline_model_l2_0_FULL_FNL.bson")
 )
     
 
 
-pmt_area = (75e-3 / 2)^2 * π
-target_radius = 0.21
-target = MultiPMTDetector(
-    @SVector[0.0, 0.0, 0.0],
-    target_radius,
-    pmt_area,
-    make_pom_pmt_coordinates(Float64),
-    UInt16(1)
-)
+target = make_pone_module(@SVector[0.0, 0.0, 0.0], 1)
+targets = make_detector_line(@SVector[0.0, 0.0, 0.0], 20, 50)
+targets = make_hex_detector(3, 50, 20, 50, truncate=1)
+pmat = reduce(hcat,  [t.position for t in targets])
+
+scatter(pmat[1:2, :])
+
+@load models["4"] model hparams opt tf_dict
+samples = sample_event(1E4, 0.1, 0.1, SA[-10., 10., 10.], targets, model, tf_dict, rng=Random.GLOBAL_RNG)
+@profview likelihood(4, 0.1, 0.1, SA[-10., 10., 10.], samples, targets, model, tf_dict)
+
+
+samples = sample_event(1E4, 0.1, 0.2, pos, model, tf_dict)
+
 
 
 begin
@@ -236,11 +217,87 @@ begin
     energy = 5e4
     particles = [ Particle(pos, dir, 0., energy, PEMinus)]
 
-    hits = mc_expectation(particles, [target])
+    hits = mc_expectation(particles, [target], 1)
     compare_mc_model(particles, [target], models, hits)
 end
 
-50 / 1E6 * energy
+
+
+begin
+    min_vals = Dict{String, Vector{Any}}()
+    for i in 1:50
+        hits = mc_expectation(particles, [target], i)
+        resampled = resample_simulation(hits, time_col=:tres)
+        rs_hits = []
+        for i in 1:16
+            mask = resampled[:, :pmt_id] .== i
+            sel = Vector{Float64}(resampled[mask, :tres])
+            push!(rs_hits, sel)
+        end
+        
+        for (mname, model_path) in models
+            if !haskey(min_vals, mname)
+                min_vals[mname] = []
+            end
+            m = BSON.load(model_path)
+            res = min_lh(rs_hits, pos, [target], m[:model], m[:tf_dict])
+            push!(min_vals[mname], Optim.minimizer(res))
+        end
+    end
+end
+
+
+
+
+fig = Figure()
+ax = Axis(fig[1, 1])
+
+bins = 0:5:60
+for (k, v) in min_vals
+
+    v = reduce(hcat, v)
+
+    hist!(ax, rad2deg.(acos.(dot.(sph_to_cart.(v[2, :], v[3, :]), Ref(sph_to_cart(dir_theta, dir_phi))))),
+    label=k, bins=bins)
+
+end
+
+fig
+
+v = reduce(hcat, min_vals["FULL"])
+hist(rad2deg.(acos.(dot.(sph_to_cart.(v[2, :], v[3, :]), Ref(sph_to_cart(dir_theta, dir_phi))))))
+
+
+
+begin
+    pos = SA[-10., 10., 0.]
+    dir_theta = 0.7
+    dir_phi = 0.5
+    dir = sph_to_cart(dir_theta, dir_phi)
+    energy = 5e4
+    particles = [ Particle(pos, dir, 0., energy, PEMinus)]
+    hits = mc_expectation(particles, [target])
+
+    dir_theta = 0.71
+    dir = sph_to_cart(dir_theta, dir_phi)
+    particles = [ Particle(pos, dir, 0., energy, PEMinus)]
+    hits2 = mc_expectation(particles, [target])
+
+    fig = Figure(resolution=(1000, 700))
+    ga = fig[1, 1] = GridLayout(4, 4)
+
+    for i in 1:16
+        row, col = divrem(i - 1, 4)
+        
+        ax = Axis(ga[col+1, row+1], xlabel="Time Residual(ns)", ylabel="Photons / time", title="PMT $i")
+        mask = hits[:, :pmt_id] .== i
+        hist!(ax, hits[mask, :tres], bins=-10:5:100, weights=hits[mask, :total_weight], color=:blue, normalization=:density)
+        mask = hits2[:, :pmt_id] .== i
+        hist!(ax, hits2[mask, :tres], bins=-10:5:100, weights=hits2[mask, :total_weight], color=:orange, normalization=:density)
+    end
+    fig
+end
+
 
 begin
     pos = SA[-10., 10., 10.]
@@ -262,31 +319,41 @@ end
 
 
 
+begin
+    model_res = Dict()
+    for (mname, model_path) in models
+        m = BSON.load(model_path)
+        Flux.testmode!(m[:model])
+        res = calc_resolution_maxlh([target], m, pos, 200)
+        model_res[mname] = res
+    end
 
-model_res = Dict()
-for (mname, model_path) in models
-    @load model_path model hparams opt tf_dict
-    Flux.testmode!(model)
-    res = calc_resolution_maxlh(model, tf_dict, pos, 200)
-    model_res[mname] = res
-end
+    m1 = BSON.load(models["1"])
+    m2 = BSON.load(models["2"])
+    Flux.testmode!(m1[:model])
+    Flux.testmode!(m2[:model])
+    model_res["1-2"] = calc_resolution_maxlh([target], m1, m2, pos, 200)
 
+    fig = Figure()
+    ax = Axis(fig[1, 1])
 
-mean(model_res)
+    bins = 0:1:60
 
-fig = Figure()
-ax = Axis(fig[1, 1])
+    for (k, v) in model_res
 
-bins = 0:1:60
+        hist!(ax, rad2deg.(acos.(dot.(sph_to_cart.(v[2, :], v[3, :]), Ref(sph_to_cart(0.1, 0.2))))),
+        label=k, bins=bins)
 
-for (k, v) in model_res
+    end
 
-    hist!(ax, rad2deg.(acos.(dot.(sph_to_cart.(v[2, :], v[3, :]), Ref(sph_to_cart(0.1, 0.2))))),
-    label=k, bins=bins)
 
 end
 
 fig
+
+leg = Legend(fig[1, 2], ax)
+fig
+
 
 @load models["4"] model hparams opt tf_dict
 samples = sample_event(1E4, 0.1, 0.2, pos, model, tf_dict)
@@ -303,10 +370,6 @@ zeniths = 0:0.01:0.5
 lh_vals = [likelihood(4,  z, 0.2, pos, samples, [target], model, tf_dict) for z in zeniths]
 CairoMakie.scatter(zeniths, lh_vals)
 
-
-
-
-@code_warntype calc_resolution_maxlh(model, tf_dict, pos, 200)
 
 
 pos = SA[10., 30., 10.]
@@ -328,40 +391,32 @@ hist(rad2deg.(acos.(dot.(sph_to_cart.(min_vals[2, :], min_vals[3, :]), Ref(sph_t
 
 
 
-
-
-
-
-function calc_fisher(logenergy, dir_theta, dir_phi, n, model; use_grad=false)
-    pmt_area = (75e-3 / 2)^2 * π
-    target_radius = 0.21
-    target = MultiPMTDetector(
-        @SVector[0.0, 0.0, 0.0],
-        target_radius,
-        pmt_area,
-        make_pom_pmt_coordinates(Float64),
-        UInt16(1)
-    )
-   
+function calc_fisher(logenergy, dir_theta, dir_phi, n, targets, model; use_grad=false, rng=nothing)
+  
     matrices = []
     for _ in 1:n
 
-        pos_theta = acos(rand(Uniform(-1, 1)))
-        pos_phi = rand(Uniform(0, 2*pi))
-        r = sqrt(rand(Uniform(5^2, 50^2)))
+        pos_theta = acos(rand(rng, Uniform(-1, 1)))
+        pos_phi = rand(rng, Uniform(0, 2*pi))
+        r = sqrt(rand(rng, Uniform(5^2, 50^2)))
         pos = r .* sph_to_cart(pos_theta, pos_phi)
 
-        for __ in 1:20
-            samples = sample_event(10^logenergy, dir_theta, dir_phi, pos, model, tf_dict)
+
+        # select relevant targets
+
+        targets_range = [t for t in targets if norm(t.position .- pos) < 200]
+
+        for __ in 1:100
+            samples = sample_event(10^logenergy, dir_theta, dir_phi, pos, targets_range, model, tf_dict; rng=rng)
             if use_grad
                 logl_grad = collect(Zygote.gradient(
-                    (logenergy, dir_theta, dir_phi) -> likelihood(logenergy, dir_theta, dir_phi, pos, samples, [target], model, tf_dict),
+                    (logenergy, dir_theta, dir_phi) -> likelihood(logenergy, dir_theta, dir_phi, pos, samples, targets_range, model, tf_dict),
                     logenergy, dir_theta, dir_phi))
 
                 push!(matrices, logl_grad .* logl_grad')
             else
                 logl_hessian =  Zygote.hessian(
-                    x -> likelihood(x[1], x[2], x[3], pos, samples, [target], model, tf_dict),
+                    x -> likelihood(x[1], x[2], x[3], pos, samples, targets_range, model, tf_dict),
                     [logenergy, dir_theta, dir_phi])
                 push!(matrices, .-logl_hessian)
             end
@@ -371,31 +426,47 @@ function calc_fisher(logenergy, dir_theta, dir_phi, n, model; use_grad=false)
     return mean(matrices)
 end
 
+@load models["4"] model hparams opt tf_dict
 
+rng = MersenneTwister(31338)
+f1 = calc_fisher(4, 0.1, 0.2, 1, targets, model; use_grad=false, rng=rng)
+rng = MersenneTwister(31338)
+f2 = calc_fisher(4, 0.1, 0.2, 1, targets, model; use_grad=true, rng=rng)
 
-
+inv(f1)
+inv(f2)
 
 logenergies = 2:0.5:5
-sds= [calc_fisher(e, 0.1, 0.2, 50, model, use_grad=true) for e in logenergies]
-cov = inv.(sds)
 
-sampled_sds = []
-for c in cov
+model_res = Dict()
+for (mname, model_path) in models
+    @load model_path model hparams opt tf_dict
+    Flux.testmode!(model)
 
-    cov_za = c[2:3, 2:3]
-    dist = MvNormal([0.1, 0.2], 0.5 * (cov_za + cov_za'))
-    rdirs = rand(dist, 10000)
+    sds= [calc_fisher(e, 0.1, 0.2, 50, model, use_grad=true) for e in logenergies]
+    cov = inv.(sds)
 
-    dangles = rad2deg.(acos.(dot.(sph_to_cart.(rdirs[1, :], rdirs[2, :]), Ref(sph_to_cart(0.1, 0.2)))))
-    push!(sampled_sds, std(dangles))
+    sampled_sds = []
+    for c in cov
+
+        cov_za = c[2:3, 2:3]
+        dist = MvNormal([0.1, 0.2], 0.5 * (cov_za + cov_za'))
+        rdirs = rand(dist, 10000)
+
+        dangles = rad2deg.(acos.(dot.(sph_to_cart.(rdirs[1, :], rdirs[2, :]), Ref(sph_to_cart(0.1, 0.2)))))
+        push!(sampled_sds, std(dangles))
+    end
+
+    model_res[mname] = sampled_sds
 end
 
+fig = Figure()
+ax = Axis(fig[1, 1])
+for (mname, res) in model_res
+    CairoMakie.scatter!(ax, logenergies, Vector{Float64}(res))
+end
 
-
-CairoMakie.scatter(logenergies, Vector{Float64}(sampled_sds))
-
-
-
+fig
 
 
 zazres =  (reduce(hcat, [sqrt.(v) for v in diag.(inv.(sds))])[2:3, :])

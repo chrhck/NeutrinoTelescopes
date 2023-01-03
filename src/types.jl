@@ -5,6 +5,7 @@ using StaticArrays
 export ParticleType, PEPlus, PEMinus, PGamma
 export Particle
 
+
 abstract type ParticleType end
 
 struct PEPlus <:ParticleType end
@@ -23,6 +24,14 @@ mutable struct Particle{PT, DT, TT, ET, PType <: ParticleType}
     type::Type{PType}
 end
 
+function Base.convert(::Type{Particle{T}}, x::Particle) where T
+    pos = T.(x.position)
+    dir = T.(x.direction)
+    energy = T(x.energy)
+    time = T(x.time)
+
+    return Particle(pos, dir, time, energy, x.type)
+end
 
 
 end

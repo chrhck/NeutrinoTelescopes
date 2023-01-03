@@ -426,7 +426,7 @@ function eval_transformed_normal_logpdf(
 end
 
 
-function sample_flow(params, range_min, range_max, n_per_param)
+function sample_flow(params, range_min, range_max, n_per_param; rng=Random.GLOBAL_RNG)
 
     @assert length(n_per_param) == size(params, 2)
 
@@ -434,7 +434,7 @@ function sample_flow(params, range_min, range_max, n_per_param)
 
     spline_params, shift, scale = _split_params(param_vec)
     x_pos, y_pos, knot_slopes = constrain_spline_params(spline_params, range_min, range_max)
-    x = randn(size(param_vec, 2)) .* scale .+ shift
+    x = randn(rng, size(param_vec, 2)) .* scale .+ shift
     y, _ = rqs_univariate(x_pos, y_pos, knot_slopes, x)
     return y
 end
