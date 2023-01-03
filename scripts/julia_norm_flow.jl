@@ -57,6 +57,36 @@ for model_num in 1:5
     @save model_path model hparams opt tf_dict
 end
 
+nsel_frac = 1
+tres, nhits, cond_labels, tf_dict = read_pmt_hits(fnames, nsel_frac, rng)
+
+chk_path = joinpath(@__DIR__, "../assets/$(model_name)_FULL")
+
+model, model_loss, hparams, opt = train_time_expectation_model(
+    (tres=tres, label=cond_labels, nhits=nhits),
+    true,
+    true,
+    chk_path,
+    K=12,
+    epochs=100,
+    lr=0.001,
+    mlp_layer_size=768,
+    mlp_layers=2,
+    dropout=0.1,
+    non_linearity=:relu,
+    batch_size=10000,
+    seed=1,
+    l2_norm_alpha=0)
+
+model_path = joinpath(@__DIR__, "../assets/$(model_name)_FULL_FNL.bson")
+model = cpu(model)
+
+@save model_path model hparams opt tf_dict
+end
+
+
+
+
 begin 
     @load joinpath(@__DIR__, "../assets/rq_spline_model_l2_0_5_FNL.bson") model hparams opt tf_dict
     @load joinpath(@__DIR__, "../assets/rq_spline_model_l2_0_5_BEST.bson") model 
