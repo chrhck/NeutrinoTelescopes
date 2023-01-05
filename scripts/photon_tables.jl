@@ -192,12 +192,16 @@ function run_sims(parsed_args)
     n_skip = parsed_args["n_skip"]
     extended = parsed_args["extended"]
     n_resample = parsed_args["n_resample"]
+    e_min = parsed_args["e_min"]
+    e_max = parsed_args["e_max"]
+    dist_min = parsed_args["dist_min"]
+    dist_max = parsed_args["dist_max"]
 
     if extended
         sobol = skip(
             SobolSeq(
-                [2, log10(10), -1, 0],
-                [5, log10(150), 1, 2 * π]),
+                [log10(e_min), log10(dist_min), -1, 0],
+                [log10(e_max), log10(dist_max), 1, 2 * π]),
             n_sims + n_skip)
 
 
@@ -214,7 +218,7 @@ function run_sims(parsed_args)
         end
     else
         sobol = skip(
-            SobolSeq([log10(10), -1], [log10(150), 1]),
+            SobolSeq([log10(dist_min), -1], [log10(dist_max), 1]),
             n_sims + n_skip)
 
         @progress "Photon sims" for i in 1:n_sims
@@ -254,6 +258,26 @@ s = ArgParseSettings()
     "--extended"
     help = "Simulate extended cascades"
     action = :store_true
+    "--e_min"
+    help = "Minimum energy"
+    arg_type = Float
+    required = false
+    default = 100.
+    "--e_max"
+    help = "Maximum energy"
+    arg_type = Float
+    required = false
+    default = 1E5
+    "--dist_min"
+    help = "Minimum distance"
+    arg_type = Float
+    required = false
+    default = 10
+    "--dist_max"
+    help = "Maximum distance"
+    arg_type = Float
+    required = false
+    default = 150
 end
 parsed_args = parse_args(ARGS, s)
 

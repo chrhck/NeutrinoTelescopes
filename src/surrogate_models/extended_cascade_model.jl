@@ -16,12 +16,15 @@ using LinearAlgebra
 using Flux.Optimise
 using BSON: @save
 using Base.Iterators
+using PoissonRandom
+using LogExpFunctions
 
-using ..RQSplineFlow: eval_transformed_normal_logpdf
+using ..RQSplineFlow: eval_transformed_normal_logpdf, sample_flow
 using ...Types
 using ...Utils
 using ...PhotonPropagation.Detection
 
+export sample_cascade_event, single_cascade_likelihood
 export create_pmt_table, preproc_labels, read_pmt_hits, calc_flow_input, fit_trafo_pipeline, log_likelihood_with_poisson
 export train_time_expectation_model, train_model!, RQNormFlowHParams, setup_time_expectation_model, setup_dataloaders
 export Normalizer
@@ -392,17 +395,18 @@ function calc_flow_input(particle::Particle, target::PhotonTarget, tf_vec::Abstr
     particle_energy = particle.energy
     target_pos = target.position
 
-    pnorm = norm(particle_pos)
-    normed_pos = particle_pos ./ pnorm 
+    rel_pos = particle_pos .- target_pos
+    dist = norm(rel_pos)
+    normed_rel_pos = rel_pos ./ dist
  
     n_pmt = get_pmt_count(target)
 
     feature_matrix = repeat(
         [
-            log(norm(particle_pos .- target_pos))
+            log(dist)
             log(particle_energy)
             particle_dir
-            normed_pos
+            normed_rel_pos
         ],
         1, n_pmt)
 
@@ -413,10 +417,13 @@ function calc_flow_input(particle::Particle, target::PhotonTarget, tf_vec::Abstr
 end
 
 function calc_flow_input(particles::AbstractVector{<:Particle}, targets::AbstractVector{<:PhotonTarget}, tf_vec)
-    return mapreduce(
+    
+    res = mapreduce(
         t -> calc_flow_input(t[1], t[2], tf_vec),
         hcat,
         product(particles, targets))
+    
+    return res
 end
 
 
@@ -460,6 +467,82 @@ function read_pmt_hits(fnames, nsel_frac=0.8, rng=nothing)
 end
 
 read_hdf(fname::String, nsel, rng) = read_hdf([fname], nsel, rng)
+
+
+
+
+function poisson_logpmf(n, log_lambda)
+    return n * log_lambda - exp(log_lambda) - loggamma(n + 1.0)
+end
+
+
+function sample_cascade_event(energy, dir_theta, dir_phi, position, time; targets, model, tf_vec, rng=nothing)
+    
+    dir = sph_to_cart(dir_theta, dir_phi)
+    particle = Particle(position, dir, time, energy, PEMinus)
+    input = calc_flow_input([particle], targets, tf_vec)    
+    output = model.embedding(input)
+
+    flow_params = output[1:end-1, :]
+    log_expec = output[end, :]
+
+    expec = exp.(log_expec)
+
+    n_hits = pois_rand.(expec)
+    mask = n_hits .> 0
+
+    non_zero_hits = n_hits[mask]
+    
+    times = sample_flow(flow_params[:, mask], model.range_min, model.range_max, non_zero_hits, rng=rng)
+
+    times .+= time
+
+    return split_by(times, n_hits)
+end
+
+
+function single_cascade_likelihood(logenergy, dir_theta, dir_phi, position, time; samples, targets, model, tf_vec)
+    
+    n_pmt = get_pmt_count(eltype(targets))
+
+    @assert length(targets)*n_pmt == length(samples)
+    dir = sph_to_cart(dir_theta, dir_phi)
+
+    energy = 10^logenergy
+    particles = [ Particle(position, dir, time, energy, PEMinus)]
+
+    input = calc_flow_input(particles, targets, tf_vec)
+    
+    output::Matrix{eltype(input)} = model.embedding(input)
+
+    flow_params = output[1:end-1, :]
+    log_expec_per_source = output[end, :] # one per source and pmt
+
+    log_expec = sum(reshape(log_expec_per_source, length(targets)*n_pmt, length(particles)), dims=2)[:, 1]
+
+    rel_log_expec = log_expec_per_source .- log_expec
+
+    hits_per = length.(samples)
+    poiss = poisson_logpmf.(hits_per, log_expec)
+    
+    ix = LinearIndices((1:n_pmt*length(targets), eachindex(particles)))
+
+    shape_llh = sum(
+        LogExpFunctions.logsumexp(
+            rel_log_expec[ix[i, j]] +
+            sum(eval_transformed_normal_logpdf(
+                samples[i] .- time,
+                repeat(flow_params[:, ix[i, j]], 1, hits_per[i]),
+                model.range_min,
+                model.range_max))
+            for j in eachindex(particles)
+        )
+        for i in 1:n_pmt*length(targets)
+    )
+
+    return sum(poiss) + shape_llh
+end
+
 
 
 end

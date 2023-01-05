@@ -10,177 +10,16 @@ using Rotations
 using LinearAlgebra
 using DataFrames
 using Zygote
-using PoissonRandom
+
 using SpecialFunctions
 using Enzyme
 using StatsBase
 using Base.Iterators
 using Distributions
 using Optim
-using LogExpFunctions
+
 using Base.Iterators
 using Formatting
-
-
-function poisson_logpmf(n, log_lambda)
-    return n * log_lambda - exp(log_lambda) - loggamma(n + 1.0)
-end
-
-
-function sample_event(energy, dir_theta, dir_phi, position, targets, model, tf_dict; rng=nothing)
-    
-    dir = sph_to_cart(dir_theta, dir_phi)
-
-    particle = Particle(position, dir, 0., energy, PEMinus)
-
-    input = calc_flow_input([particle], targets, tf_dict)
-    
-    output = model.embedding(input)
-
-    flow_params = output[1:end-1, :]
-    log_expec = output[end, :]
-
-    expec = exp.(log_expec)
-
-    n_hits = pois_rand.(expec)
-    mask = n_hits .> 0
-
-    non_zero_hits = n_hits[mask]
-    
-    return split_by(sample_flow(flow_params[:, mask], model.range_min, model.range_max, non_zero_hits, rng=rng), n_hits)
-end
-
-
-function likelihood(logenergy, dir_theta, dir_phi, position, samples, targets, model, tf_vec)
-    
-    n_pmt = get_pmt_count(eltype(targets))
-
-    @assert length(targets)*n_pmt == length(samples)
-    dir = sph_to_cart(dir_theta, dir_phi)
-
-    energy = 10^logenergy
-    particles = [ Particle(position, dir, 0., energy, PEMinus)]
-
-    input = calc_flow_input(particles, targets, tf_vec)
-    
-    output::Matrix{eltype(input)} = model.embedding(input)
-
-    flow_params = output[1:end-1, :]
-    log_expec_per_source = output[end, :] # one per source and pmt
-
-    log_expec = sum(reshape(log_expec_per_source, length(targets)*n_pmt, length(particles)), dims=2)[:, 1]
-
-    rel_log_expec = log_expec_per_source .- log_expec
-
-    hits_per = length.(samples)
-    poiss = poisson_logpmf.(hits_per, log_expec)
-    
-    ix = LinearIndices((1:n_pmt*length(targets), eachindex(particles)))
-
-    shape_llh = sum(
-        LogExpFunctions.logsumexp(
-            rel_log_expec[ix[i, j]] +
-            sum(eval_transformed_normal_logpdf(
-                samples[i],
-                repeat(flow_params[:, ix[i, j]], 1, hits_per[i]),
-                model.range_min,
-                model.range_max))
-            for j in eachindex(particles)
-        )
-        for i in 1:n_pmt*length(targets)
-    )
-
-    return sum(poiss) + shape_llh
-end
-
-
-function min_lh(samples, position, targets, model, tf_dict)
-
-    function _func(x)
-        logenergy, theta, phi = x
-        return -likelihood(logenergy, theta, phi, position, samples, targets, model, tf_dict)
-    end
-
-    inner_optimizer = ConjugateGradient()
-    lower = [2., 0, 0]
-    upper = [5, π, 2*π]
-    results  = optimize(_func, lower, upper, [3, 0.5, 0.5], Fminbox(inner_optimizer); autodiff=:forward)
-    return results
-end
-
-function calc_resolution_maxlh(targets, sampling_model, eval_model, pos, n)
-    
-    min_vals =[]
-    for _ in 1:n
-        samples = sample_event(1E4, 0.1, 0.2, pos, targets, sampling_model[:model], sampling_model[:tf_dict])
-        res = min_lh(samples, pos, targets , eval_model[:model],  eval_model[:tf_dict])    
-        push!(min_vals, Optim.minimizer(res))
-    end
-    min_vals = reduce(hcat, min_vals)
-
-    return min_vals
-end
-
-calc_resolution_maxlh(targets, model, pos, n) = calc_resolution_maxlh(targets, model, model, pos, n)
-
-
-
-function mc_expectation(particles::AbstractVector{<:Particle}, targets::AbstractVector{<:MultiPMTDetector}, seed)
-    
-    wl_range = (300.0f0, 800.0f0)
-    medium = make_cascadia_medium_properties(0.99f0)
-    spectrum = CherenkovSpectrum(wl_range, 30, medium)
-
-    sources = [ExtendedCherenkovEmitter(convert(Particle{Float32}, p), medium, wl_range) for p in particles]
-
-    targets_c::Vector{MultiPMTDetector{Float32}} = targets
-
-    photon_setup = PhotonPropSetup(sources, targets_c, medium, spectrum, seed)
-    photons = propagate_photons(photon_setup)
-
-    calc_total_weight!(photons, photon_setup)
-    calc_time_residual!(photons, photon_setup)
-
-    rot = RotMatrix3(I)
-    hits = make_hits_from_photons(photons, photon_setup, rot)
-    return hits
-end
-
-
-function compare_mc_model(
-    particles::AbstractVector{<:Particle},
-    targets::AbstractVector{<:PhotonTarget},
-    models::Dict,
-    hits)
-    
-    times = -10:1:100
-    fig = Figure(resolution=(1000, 700))
-    ga = fig[1, 1] = GridLayout(4, 4)
-
-    for i in 1:16
-        row, col = divrem(i - 1, 4)
-        mask = hits[:, :pmt_id] .== i
-        ax = Axis(ga[col+1, row+1], xlabel="Time Residual(ns)", ylabel="Photons / time", title="PMT $i")
-        hist!(ax, hits[mask, :tres], bins=-10:5:100, weights=hits[mask, :total_weight], color=:orange, normalization=:density)
-    end
-
-    for (mname, model_path) in models
-        @load model_path model hparams opt tf_dict
-        input = calc_flow_input(particles, targets, tf_dict)
-        log_pdf, log_expec = model(repeat(times, size(input, 2)), repeat(input, inner=(1, length(times))), true)
-        log_pdf = reshape(log_pdf, length(times), size(input, 2),)
-        log_expec = reshape(log_expec, length(times), size(input, 2),)
-    
-        for i in 1:16
-            row, col = divrem(i - 1, 4)
-            lines!(ga[col+1, row+1], times, exp.(log_pdf[:, i] + log_expec[:, i]), label=mname)
-        end
-    end
-
-    fig
-end
-
-compare_mc_model(particles, targets, models) =  compare_mc_model(particles, targets, models, mc_expectation(particles, targets))
 
 
 models = Dict(
@@ -203,12 +42,13 @@ scatter(pmat[1:2, :])
 
 @load models["4"] model hparams opt tf_dict
 samples = sample_event(1E4, 0.1, 0.1, SA[-10., 10., 10.], targets, model, tf_dict, rng=Random.GLOBAL_RNG)
-@profview likelihood(4, 0.1, 0.1, SA[-10., 10., 10.], samples, targets, model, tf_dict)
 
-
-samples = sample_event(1E4, 0.1, 0.2, pos, model, tf_dict)
-
-
+dir_theta = 0.1
+dir_phi = 0.1
+pos = SA[10., 10., -10.]
+logenergy = 4.
+rng = MersenneTwister(31338)
+samples = sample_event(10^logenergy, dir_theta, dir_phi, pos, [target], model, tf_dict; rng=rng)
 
 begin
     pos = SA[-10., 10., 10.]
@@ -438,7 +278,6 @@ function calc_fisher(logenergy, dir_theta, dir_phi, n, targets, model; use_grad=
     return mean(matrices)
 end
 
-@load models["4"] model hparams opt tf_dict
 
 rng = MersenneTwister(31338)
 f1 = calc_fisher(4, 0.1, 0.2, 1, targets, model; use_grad=false, rng=rng)
@@ -504,7 +343,7 @@ logl_grad = Zygote.gradient(
     1E4)
 
 
-a = Enzyme.autodiff(Enzyme.Reverse, test, Active, Active(1E4), samples, [target], tf_dict)
+
 #@show a
 
 pmt_area = Float32((75e-3 / 2)^2 * π)
