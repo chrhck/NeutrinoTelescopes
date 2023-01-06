@@ -273,12 +273,12 @@ s = ArgParseSettings()
     help = "Minimum distance"
     arg_type = Float64
     required = false
-    default = 10
+    default = 10.
     "--dist_max"
     help = "Maximum distance"
     arg_type = Float64
     required = false
-    default = 150
+    default = 150.
 end
 parsed_args = parse_args(ARGS, s)
 

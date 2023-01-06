@@ -18,7 +18,7 @@ export cuda_propagate_photons!, initialize_photon_arrays, process_output
 export cuda_propagate_multi_target!, check_intersection
 export cherenkov_ang_dist, cherenkov_ang_dist_int
 export make_hits_from_photons, propagate_photons, run_photon_prop
-export calc_time_residual!, calc_total_weight!, calc_tgeo
+export calc_time_residual!, calc_total_weight!, calc_tgeo, c_at_wl
 export PhotonPropSetup, PhotonHit
 
 using ...Utils
@@ -965,11 +965,14 @@ function make_hits_from_photons(
 end
 
 
-function calc_tgeo(distance, medium)
+function c_at_wl(wl, medium)
     c_vac = ustrip(u"m/ns", SpeedOfLightInVacuum)
-
-    return distance / (c_vac / refractive_index(800.0f0, medium))
+    return c_vac / refractive_index(wl, medium)
 end
+
+calc_tgeo(distance, c_n::Number) = distance / c_n
+calc_tgeo(distance, medium::MediumProperties) = calc_tgeo(distance, c_at_wl(800f0, medium))
+
 
 function calc_time_residual!(df::AbstractDataFrame, setup::PhotonPropSetup)   
 

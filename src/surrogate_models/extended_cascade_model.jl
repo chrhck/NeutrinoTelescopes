@@ -23,6 +23,7 @@ using ..RQSplineFlow: eval_transformed_normal_logpdf, sample_flow
 using ...Types
 using ...Utils
 using ...PhotonPropagation.Detection
+using ...PhotonPropagation.PhotonPropagationCuda
 
 export sample_cascade_event, single_cascade_likelihood, evaluate_model
 export create_pmt_table, preproc_labels, read_pmt_hits, calc_flow_input, fit_trafo_pipeline, log_likelihood_with_poisson
@@ -476,7 +477,7 @@ function poisson_logpmf(n, log_lambda)
 end
 
 
-function sample_cascade_event(energy, dir_theta, dir_phi, position, time; targets, model, tf_vec, rng=nothing)
+function sample_cascade_event(energy, dir_theta, dir_phi, position, time; targets, model, tf_vec, c_n, rng=nothing)
     
     dir = sph_to_cart(dir_theta, dir_phi)
     particle = Particle(position, dir, time, energy, PEMinus)
@@ -494,16 +495,20 @@ function sample_cascade_event(energy, dir_theta, dir_phi, position, time; target
     non_zero_hits = n_hits[mask]
     
     times = sample_flow(flow_params[:, mask], model.range_min, model.range_max, non_zero_hits, rng=rng)
+    t_geos = [calc_tgeo(norm(particles[1].position .- targ.position) - targ.radius, c_n) for targ in targets]
 
-    times .+= time
+    data = [length(ts) > 0 ? ts .- t_geos .- time : ts for ts in split_by(times, n_hits)]
 
-    return split_by(times, n_hits)
+
+    return data
 end
 
 
-function evaluate_model(particles, data, targets, model, tf_vec)
+function evaluate_model(particles, data, targets, model, tf_vec, c_n)
     n_pmt = get_pmt_count(eltype(targets))
     @assert length(targets)*n_pmt == length(data)
+
+    t_geos = [calc_tgeo(norm(particles[1].position .- targ.position) - targ.radius, c_n) for targ in targets]
 
     input = calc_flow_input(particles, targets, tf_vec)
     
@@ -526,7 +531,7 @@ function evaluate_model(particles, data, targets, model, tf_vec)
         LogExpFunctions.logsumexp(
             rel_log_expec[i, j] +
             sum(eval_transformed_normal_logpdf(
-                data[i] .- particles[j].time,
+                data[i] .- t_geos - particles[j].time,
                 repeat(flow_params[:, ix[i, j]], 1, hits_per[i]),
                 model.range_min,
                 model.range_max))
