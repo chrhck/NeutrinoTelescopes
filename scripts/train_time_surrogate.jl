@@ -31,6 +31,8 @@ tres, nhits, cond_labels, tf_dict = read_pmt_hits(fnames, nsel_frac, rng)
 
 nit = 100
 
+
+
 hob = @hyperopt for i = nit,
     sampler = CLHSampler(dims=[Continuous(), Categorical(4), Continuous(), Categorical(11), Categorical(4)]),
     lr = 10 .^ LinRange(-4, -2, nit),

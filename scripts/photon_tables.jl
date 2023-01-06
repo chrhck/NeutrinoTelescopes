@@ -58,6 +58,7 @@ function run_sim(
     spectrum,
     medium,
     output_fname,
+    seed,
     n_resample=100;
     extended=true)
 
@@ -88,7 +89,7 @@ function run_sim(
     oversample = 1.0
     photons = nothing
 
-    setup = PhotonPropSetup(source, target, medium, spectrum)
+    setup = PhotonPropSetup(source, target, medium, spectrum, seed)
 
     while true
         prop_source = setup.sources[1]
@@ -214,7 +215,7 @@ function run_sims(parsed_args)
             dir_costheta = pars[3]
             dir_phi = pars[4]
 
-            run_sim(energy, distance, dir_costheta, dir_phi, target, spectrum, medium, parsed_args["output"], n_resample, extended=true)
+            run_sim(energy, distance, dir_costheta, dir_phi, target, spectrum, medium, parsed_args["output"], i+n_skip, n_resample, extended=true)
         end
     else
         sobol = skip(
@@ -228,7 +229,7 @@ function run_sims(parsed_args)
             dir_costheta = pars[2]
             dir_phi = 0
 
-            run_sim(energy, distance, dir_costheta, dir_phi, target, spectrum, medium, parsed_args["output"], n_resample, extended=false)
+            run_sim(energy, distance, dir_costheta, dir_phi, target, spectrum, medium, parsed_args["output"], i+n_skip, n_resample, extended=false)
         end
     end
 end
@@ -265,17 +266,17 @@ s = ArgParseSettings()
     default = 100.
     "--e_max"
     help = "Maximum energy"
-    arg_type = Float
+    arg_type = Float64
     required = false
     default = 1E5
     "--dist_min"
     help = "Minimum distance"
-    arg_type = Float
+    arg_type = Float64
     required = false
     default = 10
     "--dist_max"
     help = "Maximum distance"
-    arg_type = Float
+    arg_type = Float64
     required = false
     default = 150
 end

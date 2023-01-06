@@ -969,12 +969,14 @@ function calc_time_residual!(df::AbstractDataFrame, setup::PhotonPropSetup)
 
     targ_id_map = Dict([target.module_id => target for target in setup.targets])
 
+    t0 = setup.sources[1].time
     for (key, subdf) in pairs(groupby(df, :module_id))
         target = targ_id_map[key.module_id]
         distance = norm(setup.sources[1].position .- target.position)
         tgeo = (distance - target.radius) ./ (c_vac / refractive_index(800.0f0, setup.medium))
 
-        subdf[!, :tres] = (subdf[:, :time] .- tgeo)
+
+        subdf[!, :tres] = (subdf[:, :time] .- tgeo .-t0)
     end
 
     #=

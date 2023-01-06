@@ -24,7 +24,7 @@ using ...Types
 using ...Utils
 using ...PhotonPropagation.Detection
 
-export sample_cascade_event, single_cascade_likelihood
+export sample_cascade_event, single_cascade_likelihood, evaluate_model
 export create_pmt_table, preproc_labels, read_pmt_hits, calc_flow_input, fit_trafo_pipeline, log_likelihood_with_poisson
 export train_time_expectation_model, train_model!, RQNormFlowHParams, setup_time_expectation_model, setup_dataloaders
 export Normalizer
@@ -501,7 +501,45 @@ function sample_cascade_event(energy, dir_theta, dir_phi, position, time; target
 end
 
 
-function single_cascade_likelihood(logenergy, dir_theta, dir_phi, position, time; samples, targets, model, tf_vec)
+function evaluate_model(particles, data, targets, model, tf_vec)
+    n_pmt = get_pmt_count(eltype(targets))
+    @assert length(targets)*n_pmt == length(data)
+
+    input = calc_flow_input(particles, targets, tf_vec)
+    
+    output::Matrix{eltype(input)} = model.embedding(input)
+
+    flow_params = output[1:end-1, :]
+    log_expec_per_source = output[end, :] # one per source and pmt
+
+    log_expec_per_source_rs = reshape(log_expec_per_source, length(targets)*n_pmt, length(particles))
+    log_expec = sum(log_expec_per_source_rs, dims=2)[:, 1]
+    rel_log_expec = log_expec_per_source_rs .- log_expec
+
+    hits_per = length.(data)
+    poiss = poisson_logpmf.(hits_per, log_expec)
+    
+    ix = LinearIndices((1:n_pmt*length(targets), eachindex(particles)))
+
+    shape_llh_gen = ( 
+        length(data[i]) > 0 ?
+        LogExpFunctions.logsumexp(
+            rel_log_expec[i, j] +
+            sum(eval_transformed_normal_logpdf(
+                data[i] .- particles[j].time,
+                repeat(flow_params[:, ix[i, j]], 1, hits_per[i]),
+                model.range_min,
+                model.range_max))
+            for j in eachindex(particles)
+        ) :
+        0.
+        for i in 1:n_pmt*length(targets)
+    )
+    
+    return poiss, shape_llh_gen, log_expec
+end
+
+function single_cascade_likelihood(logenergy, dir_theta, dir_phi, position, time; data, targets, model, tf_vec)
     
     n_pmt = get_pmt_count(eltype(targets))
 
@@ -511,38 +549,8 @@ function single_cascade_likelihood(logenergy, dir_theta, dir_phi, position, time
     energy = 10^logenergy
     particles = [ Particle(position, dir, time, energy, PEMinus)]
 
-    input = calc_flow_input(particles, targets, tf_vec)
-    
-    output::Matrix{eltype(input)} = model.embedding(input)
-
-    flow_params = output[1:end-1, :]
-    log_expec_per_source = output[end, :] # one per source and pmt
-
-    log_expec = sum(reshape(log_expec_per_source, length(targets)*n_pmt, length(particles)), dims=2)[:, 1]
-
-    rel_log_expec = log_expec_per_source .- log_expec
-
-    hits_per = length.(samples)
-    poiss = poisson_logpmf.(hits_per, log_expec)
-    
-    ix = LinearIndices((1:n_pmt*length(targets), eachindex(particles)))
-
-    shape_llh = sum(
-        LogExpFunctions.logsumexp(
-            rel_log_expec[ix[i, j]] +
-            sum(eval_transformed_normal_logpdf(
-                samples[i] .- time,
-                repeat(flow_params[:, ix[i, j]], 1, hits_per[i]),
-                model.range_min,
-                model.range_max))
-            for j in eachindex(particles)
-        )
-        for i in 1:n_pmt*length(targets)
-    )
-
-    return sum(poiss) + shape_llh
+    pois_llh, shape_llh, _ = evaluate_model(particles, data, targets, model, tf_vec)
+    return sum(pois_llh) + sum(shape_llh)
 end
-
-
 
 end

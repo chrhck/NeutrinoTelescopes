@@ -14,8 +14,6 @@ using ArgParse
 global_logger(TerminalLogger(right_justify=120))
 
 
-
-
 function run_sim(; g, focus_distances, n_sims, output)
 
 
@@ -33,10 +31,7 @@ function run_sim(; g, focus_distances, n_sims, output)
     all_photons = []
     @progress for d in focus_distances
 
-        #dy = (target.position[2] - laser_pos[2]) / (d - laser_pos[3])
-
         beam_dir = @SVector[0.0f0, 0.0f0, 1.0f0]
-        # beam_divergence = Float32(asin(2E-3 / 5))
 
         beam_divergence = Float32(atan((abs(target.position[2] - laser_pos[2])) / d))
         @show beam_divergence
