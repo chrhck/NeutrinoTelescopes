@@ -18,7 +18,7 @@ export cuda_propagate_photons!, initialize_photon_arrays, process_output
 export cuda_propagate_multi_target!, check_intersection
 export cherenkov_ang_dist, cherenkov_ang_dist_int
 export make_hits_from_photons, propagate_photons, run_photon_prop
-export calc_time_residual!, calc_total_weight!
+export calc_time_residual!, calc_total_weight!, calc_tgeo
 export PhotonPropSetup, PhotonHit
 
 using ...Utils
@@ -964,8 +964,14 @@ function make_hits_from_photons(
 
 end
 
-function calc_time_residual!(df::AbstractDataFrame, setup::PhotonPropSetup)
+
+function calc_tgeo(distance, medium)
     c_vac = ustrip(u"m/ns", SpeedOfLightInVacuum)
+
+    return distance / (c_vac / refractive_index(800.0f0, medium))
+end
+
+function calc_time_residual!(df::AbstractDataFrame, setup::PhotonPropSetup)   
 
     targ_id_map = Dict([target.module_id => target for target in setup.targets])
 
@@ -973,17 +979,10 @@ function calc_time_residual!(df::AbstractDataFrame, setup::PhotonPropSetup)
     for (key, subdf) in pairs(groupby(df, :module_id))
         target = targ_id_map[key.module_id]
         distance = norm(setup.sources[1].position .- target.position)
-        tgeo = (distance - target.radius) ./ (c_vac / refractive_index(800.0f0, setup.medium))
-
+        tgeo = calc_tgeo((distance - target.radius), setup.medium)
 
         subdf[!, :tres] = (subdf[:, :time] .- tgeo .-t0)
     end
-
-    #=
-    distance = norm(setup.sources[1].position .- setup.target.position)
-    tgeo = (distance - setup.target.radius) ./ (c_vac / refractive_index(800.0f0, setup.medium))
-    df[!, :tres] = (df[:, :time] .- tgeo)
-    =#
 end
 
 end # module

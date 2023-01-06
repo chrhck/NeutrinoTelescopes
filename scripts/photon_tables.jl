@@ -261,7 +261,7 @@ s = ArgParseSettings()
     action = :store_true
     "--e_min"
     help = "Minimum energy"
-    arg_type = Float
+    arg_type = Float64
     required = false
     default = 100.
     "--e_max"
