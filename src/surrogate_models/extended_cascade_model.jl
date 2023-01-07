@@ -497,7 +497,7 @@ function sample_cascade_event(energy, dir_theta, dir_phi, position, time; target
     times = sample_flow(flow_params[:, mask], model.range_min, model.range_max, non_zero_hits, rng=rng)
     t_geos = [calc_tgeo(norm(particles[1].position .- targ.position) - targ.radius, c_n) for targ in targets]
 
-    data = [length(ts) > 0 ? ts .- t_geos .- time : ts for ts in split_by(times, n_hits)]
+    data = [length(ts) > 0 ? ts .+ t_geos .+ time : ts for ts in split_by(times, n_hits)]
 
 
     return data
@@ -508,7 +508,8 @@ function evaluate_model(particles, data, targets, model, tf_vec, c_n)
     n_pmt = get_pmt_count(eltype(targets))
     @assert length(targets)*n_pmt == length(data)
 
-    t_geos = [calc_tgeo(norm(particles[1].position .- targ.position) - targ.radius, c_n) for targ in targets]
+    t_geos = map(((p, t),) -> calc_tgeo(norm(p.position .- t.position) - t.radius, c_n), product(particles, targets))
+
 
     input = calc_flow_input(particles, targets, tf_vec)
     
@@ -525,13 +526,14 @@ function evaluate_model(particles, data, targets, model, tf_vec, c_n)
     poiss = poisson_logpmf.(hits_per, log_expec)
     
     ix = LinearIndices((1:n_pmt*length(targets), eachindex(particles)))
+    ix2 = LinearIndices((1:length(targets), eachindex(particles)))
 
     shape_llh_gen = ( 
         length(data[i]) > 0 ?
         LogExpFunctions.logsumexp(
             rel_log_expec[i, j] +
             sum(eval_transformed_normal_logpdf(
-                data[i] .- t_geos - particles[j].time,
+                data[i] .- t_geos[ix2[i%length(targets)+1, j]] .- particles[j].time,
                 repeat(flow_params[:, ix[i, j]], 1, hits_per[i]),
                 model.range_min,
                 model.range_max))
