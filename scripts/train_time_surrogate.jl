@@ -61,7 +61,7 @@ hob = @hyperopt for i = nit,
     model_loss
 end
 
-hob
+@show hob
 
 ho_path = joinpath(@__DIR__, "../assets/hyperopt.bson")
 @save ho_path hob.history hob.results

@@ -103,11 +103,19 @@ function run_sim(
             break
         end
 
+
         setup.sources[1] = oversample_source(prop_source, 10)
         println(format("distance {:.2f} photons: {:d}", distance, setup.sources[1].photons))
         oversample *= 10
 
     end
+
+    nph_sim = nrow(photons)
+    if nph_sim > 1E6
+        photons = photons[1:1000000]
+        oversample = 1E6 / nph_sim
+    end
+
 
     calc_time_residual!(photons, setup)
 
@@ -215,7 +223,7 @@ function run_sims(parsed_args)
             dir_costheta = pars[3]
             dir_phi = pars[4]
 
-            run_sim(energy, distance, dir_costheta, dir_phi, target, spectrum, medium, parsed_args["output"], i+n_skip, n_resample, extended=true)
+            run_sim(energy, distance, dir_costheta, dir_phi, target, spectrum, medium, parsed_args["output"], i + n_skip, n_resample, extended=true)
         end
     else
         sobol = skip(
@@ -229,7 +237,7 @@ function run_sims(parsed_args)
             dir_costheta = pars[2]
             dir_phi = 0
 
-            run_sim(energy, distance, dir_costheta, dir_phi, target, spectrum, medium, parsed_args["output"], i+n_skip, n_resample, extended=false)
+            run_sim(energy, distance, dir_costheta, dir_phi, target, spectrum, medium, parsed_args["output"], i + n_skip, n_resample, extended=false)
         end
     end
 end
@@ -263,7 +271,7 @@ s = ArgParseSettings()
     help = "Minimum energy"
     arg_type = Float64
     required = false
-    default = 100.
+    default = 100.0
     "--e_max"
     help = "Maximum energy"
     arg_type = Float64
@@ -273,12 +281,12 @@ s = ArgParseSettings()
     help = "Minimum distance"
     arg_type = Float64
     required = false
-    default = 10.
+    default = 10.0
     "--dist_max"
     help = "Maximum distance"
     arg_type = Float64
     required = false
-    default = 150.
+    default = 150.0
 end
 parsed_args = parse_args(ARGS, s)
 
