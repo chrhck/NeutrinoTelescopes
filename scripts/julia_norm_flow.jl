@@ -82,14 +82,13 @@ model_path = joinpath(@__DIR__, "../assets/$(model_name)_FULL_FNL.bson")
 model = cpu(model)
 
 @save model_path model hparams opt tf_dict
-end
 
 
 
 
-begin 
+begin
     @load joinpath(@__DIR__, "../assets/rq_spline_model_l2_0_5_FNL.bson") model hparams opt tf_dict
-    @load joinpath(@__DIR__, "../assets/rq_spline_model_l2_0_5_BEST.bson") model 
+    @load joinpath(@__DIR__, "../assets/rq_spline_model_l2_0_5_BEST.bson") model
 end
 
 h5open(fnames[2], "r") do fid
@@ -116,7 +115,7 @@ h5open(fnames[2], "r") do fid
     fig = Figure()
 
     ax1 = Axis(fig[1, 1], title="Shape", xlabel="Time Residual (800nm) (ns)", ylabel="PDF")
-    ax2 = Axis(fig[1, 2], title="Shape + Counts", xlabel="Time Residual (800nm) (ns)", ylabel ="Counts")
+    ax2 = Axis(fig[1, 2], title="Shape + Counts", xlabel="Time Residual (800nm) (ns)", ylabel="Counts")
 
     log_pdf_eval, log_expec = cpu(model)(t_plot, l_plot, true)
 
