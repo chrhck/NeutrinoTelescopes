@@ -302,7 +302,7 @@ function train_model!(opt, train, test, model, loss_function, hparams, logger, d
         println("Epoch: $epoch, Train: $total_train_loss Test: $total_test_loss")
 
         if !isnothing(checkpoint_path) && epoch > 5 && total_test_loss < best_test
-            @save checkpoint_path*"_BEST.bson" model
+            @save checkpoint_path * "_BEST.bson" model
             best_test = total_test_loss
         end
 
@@ -364,7 +364,7 @@ function apply_feature_transform(m, tf_vec, n_pmt)
     tf_matrix = mapreduce(
         t -> permutedims(t[2].(t[1])),
         vcat,
-        zip(eachrow(m), tf_vec) 
+        zip(eachrow(m), tf_vec)
     )
 
     return vcat(one_hot, tf_matrix)
@@ -399,7 +399,7 @@ function calc_flow_input(particle::Particle, target::PhotonTarget, tf_vec::Abstr
     rel_pos = particle_pos .- target_pos
     dist = norm(rel_pos)
     normed_rel_pos = rel_pos ./ dist
- 
+
     n_pmt = get_pmt_count(target)
 
     feature_matrix = repeat(
@@ -418,12 +418,12 @@ function calc_flow_input(particle::Particle, target::PhotonTarget, tf_vec::Abstr
 end
 
 function calc_flow_input(particles::AbstractVector{<:Particle}, targets::AbstractVector{<:PhotonTarget}, tf_vec)
-    
+
     res = mapreduce(
         t -> calc_flow_input(t[1], t[2], tf_vec),
         hcat,
         product(particles, targets))
-    
+
     return res
 end
 
@@ -478,10 +478,10 @@ end
 
 
 function sample_cascade_event(energy, dir_theta, dir_phi, position, time; targets, model, tf_vec, c_n, rng=nothing)
-    
+
     dir = sph_to_cart(dir_theta, dir_phi)
     particle = Particle(position, dir, time, energy, PEMinus)
-    input = calc_flow_input([particle], targets, tf_vec)    
+    input = calc_flow_input([particle], targets, tf_vec)
     output = model.embedding(input)
 
     flow_params = output[1:end-1, :]
@@ -493,12 +493,23 @@ function sample_cascade_event(energy, dir_theta, dir_phi, position, time; target
     mask = n_hits .> 0
 
     non_zero_hits = n_hits[mask]
-    
+
     times = sample_flow(flow_params[:, mask], model.range_min, model.range_max, non_zero_hits, rng=rng)
-    t_geos = [calc_tgeo(norm(particles[1].position .- targ.position) - targ.radius, c_n) for targ in targets]
+    times_per = split_by(times, n_hits)
 
-    data = [length(ts) > 0 ? ts .+ t_geos .+ time : ts for ts in split_by(times, n_hits)]
+    n_pmt = get_pmt_count(eltype(targets))
 
+    data = Vector{Vector{Float64}}(undef, n_pmt * length(targets))
+
+    for i in eachindex(times_per)
+        targ = targets[div(i - 1, n_pmt)+1]
+        if length(times_per[i]) > 0
+            t_geo = calc_tgeo(norm(particle.position .- targ.position) - targ.radius, c_n)
+            data[i] = times_per[i] .+ t_geo .+ time
+        else
+            data[i] = times_per[i]
+        end
+    end
 
     return data
 end
@@ -506,57 +517,57 @@ end
 
 function evaluate_model(particles, data, targets, model, tf_vec, c_n)
     n_pmt = get_pmt_count(eltype(targets))
-    @assert length(targets)*n_pmt == length(data)
+    @assert length(targets) * n_pmt == length(data)
 
     t_geos = map(((p, t),) -> calc_tgeo(norm(p.position .- t.position) - t.radius, c_n), product(particles, targets))
 
 
     input = calc_flow_input(particles, targets, tf_vec)
-    
+
     output::Matrix{eltype(input)} = model.embedding(input)
 
     flow_params = output[1:end-1, :]
     log_expec_per_source = output[end, :] # one per source and pmt
 
-    log_expec_per_source_rs = reshape(log_expec_per_source, length(targets)*n_pmt, length(particles))
+    log_expec_per_source_rs = reshape(log_expec_per_source, length(targets) * n_pmt, length(particles))
     log_expec = sum(log_expec_per_source_rs, dims=2)[:, 1]
     rel_log_expec = log_expec_per_source_rs .- log_expec
 
     hits_per = length.(data)
     poiss = poisson_logpmf.(hits_per, log_expec)
-    
+
     ix = LinearIndices((1:n_pmt*length(targets), eachindex(particles)))
     ix2 = LinearIndices((1:length(targets), eachindex(particles)))
 
-    shape_llh_gen = ( 
+    shape_llh_gen = (
         length(data[i]) > 0 ?
         LogExpFunctions.logsumexp(
             rel_log_expec[i, j] +
             sum(eval_transformed_normal_logpdf(
-                data[i] .- t_geos[ix2[i%length(targets)+1, j]] .- particles[j].time,
+                data[i] .- t_geos[ix2[div(i - 1, n_pmt)+1, j]] .- particles[j].time,
                 repeat(flow_params[:, ix[i, j]], 1, hits_per[i]),
                 model.range_min,
                 model.range_max))
             for j in eachindex(particles)
         ) :
-        0.
+        0.0
         for i in 1:n_pmt*length(targets)
     )
-    
+
     return poiss, shape_llh_gen, log_expec
 end
 
-function single_cascade_likelihood(logenergy, dir_theta, dir_phi, position, time; data, targets, model, tf_vec)
-    
+function single_cascade_likelihood(logenergy, dir_theta, dir_phi, position, time; data, targets, model, tf_vec, c_n)
+
     n_pmt = get_pmt_count(eltype(targets))
 
-    @assert length(targets)*n_pmt == length(samples)
+    @assert length(targets) * n_pmt == length(data)
     dir = sph_to_cart(dir_theta, dir_phi)
 
     energy = 10^logenergy
-    particles = [ Particle(position, dir, time, energy, PEMinus)]
+    particles = [Particle(position, dir, time, energy, PEMinus)]
 
-    pois_llh, shape_llh, _ = evaluate_model(particles, data, targets, model, tf_vec)
+    pois_llh, shape_llh, _ = evaluate_model(particles, data, targets, model, tf_vec, c_n)
     return sum(pois_llh) + sum(shape_llh)
 end
 
