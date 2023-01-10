@@ -112,7 +112,7 @@ function run_sim(
 
     nph_sim = nrow(photons)
     if nph_sim > 1E6
-        photons = photons[1:1000000]
+        photons = photons[1:1000000, :]
         oversample = 1E6 / nph_sim
     end
 
